@@ -129,7 +129,7 @@ public class OnheapIncrementalIndexTest
     ));
 
     // override the aggregators with the mocks
-    index.concurrentGet(0)[0] = mockedAggregator;
+    index.aggsManager.concurrentGet(0)[0] = mockedAggregator;
 
     // close the indexer and validate the expectations
     EasyMock.replay(mockedAggregator);

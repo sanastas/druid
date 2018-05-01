@@ -30,8 +30,6 @@ import com.google.common.collect.Maps;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
 import io.druid.collections.NonBlockingPool;
-import io.druid.common.config.NullHandling;
-import io.druid.common.guava.GuavaUtils;
 import io.druid.data.input.InputRow;
 import io.druid.data.input.Row;
 import io.druid.data.input.impl.DimensionSchema;
@@ -40,35 +38,20 @@ import io.druid.data.input.impl.SpatialDimensionSchema;
 import io.druid.java.util.common.DateTimes;
 import io.druid.java.util.common.IAE;
 import io.druid.java.util.common.ISE;
-import io.druid.java.util.common.StringUtils;
 import io.druid.java.util.common.granularity.Granularity;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.PostAggregator;
-import io.druid.query.dimension.DimensionSpec;
-import io.druid.query.groupby.RowBasedColumnSelectorFactory;
-import io.druid.query.monomorphicprocessing.RuntimeShapeInspector;
 import io.druid.segment.AbstractIndex;
-import io.druid.segment.ColumnSelectorFactory;
 import io.druid.segment.ColumnValueSelector;
 import io.druid.segment.DimensionHandler;
 import io.druid.segment.DimensionHandlerUtils;
 import io.druid.segment.DimensionIndexer;
-import io.druid.segment.DimensionSelector;
-import io.druid.segment.DoubleColumnSelector;
-import io.druid.segment.FloatColumnSelector;
-import io.druid.segment.LongColumnSelector;
 import io.druid.segment.Metadata;
-import io.druid.segment.NilColumnValueSelector;
-import io.druid.segment.ObjectColumnSelector;
 import io.druid.segment.StorageAdapter;
-import io.druid.segment.VirtualColumns;
 import io.druid.segment.column.Column;
 import io.druid.segment.column.ColumnCapabilities;
 import io.druid.segment.column.ColumnCapabilitiesImpl;
 import io.druid.segment.column.ValueType;
-import io.druid.segment.serde.ComplexMetricExtractor;
-import io.druid.segment.serde.ComplexMetricSerde;
-import io.druid.segment.serde.ComplexMetrics;
 import org.joda.time.DateTime;
 import org.joda.time.Interval;
 
@@ -107,129 +90,16 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
       .put(DimensionSchema.ValueType.DOUBLE, ValueType.DOUBLE)
       .build();
 
-  /**
-   * Column selector used at ingestion time for inputs to aggregators.
-   *
-   * @param agg                       the aggregator
-   * @param in                        ingestion-time input row supplier
-   * @param deserializeComplexMetrics whether complex objects should be deserialized by a {@link ComplexMetricExtractor}
-   *
-   * @return column selector factory
-   */
-  public static ColumnSelectorFactory makeColumnSelectorFactory(
-      final VirtualColumns virtualColumns,
-      final AggregatorFactory agg,
-      final Supplier<InputRow> in,
-      final boolean deserializeComplexMetrics
-  )
-  {
-    final RowBasedColumnSelectorFactory baseSelectorFactory = RowBasedColumnSelectorFactory.create(in, null);
-
-    class IncrementalIndexInputRowColumnSelectorFactory implements ColumnSelectorFactory
-    {
-      @Override
-      public ColumnValueSelector<?> makeColumnValueSelector(final String column)
-      {
-        final String typeName = agg.getTypeName();
-        boolean isComplexMetric =
-            GuavaUtils.getEnumIfPresent(ValueType.class, StringUtils.toUpperCase(typeName)) == null ||
-            typeName.equalsIgnoreCase(ValueType.COMPLEX.name());
-        if (!isComplexMetric || !deserializeComplexMetrics) {
-          return baseSelectorFactory.makeColumnValueSelector(column);
-        } else {
-          final ComplexMetricSerde serde = ComplexMetrics.getSerdeForType(typeName);
-          if (serde == null) {
-            throw new ISE("Don't know how to handle type[%s]", typeName);
-          }
-
-          final ComplexMetricExtractor extractor = serde.getExtractor();
-          return new ColumnValueSelector()
-          {
-            @Override
-            public boolean isNull()
-            {
-              return in.get().getMetric(column) == null;
-            }
-
-            @Override
-            public long getLong()
-            {
-              Number metric = in.get().getMetric(column);
-              assert NullHandling.replaceWithDefault() || metric != null;
-              return DimensionHandlerUtils.nullToZero(metric).longValue();
-            }
-
-            @Override
-            public float getFloat()
-            {
-              Number metric = in.get().getMetric(column);
-              assert NullHandling.replaceWithDefault() || metric != null;
-              return DimensionHandlerUtils.nullToZero(metric).floatValue();
-            }
-
-            @Override
-            public double getDouble()
-            {
-              Number metric = in.get().getMetric(column);
-              assert NullHandling.replaceWithDefault() || metric != null;
-              return DimensionHandlerUtils.nullToZero(metric).doubleValue();
-            }
-
-            @Override
-            public Class classOfObject()
-            {
-              return extractor.extractedClass();
-            }
-
-            @Override
-            public Object getObject()
-            {
-              return extractor.extractValue(in.get(), column);
-            }
-
-            @Override
-            public void inspectRuntimeShape(RuntimeShapeInspector inspector)
-            {
-              inspector.visit("in", in);
-              inspector.visit("extractor", extractor);
-            }
-          };
-        }
-      }
-
-      @Override
-      public DimensionSelector makeDimensionSelector(DimensionSpec dimensionSpec)
-      {
-        return baseSelectorFactory.makeDimensionSelector(dimensionSpec);
-      }
-
-      @Nullable
-      @Override
-      public ColumnCapabilities getColumnCapabilities(String columnName)
-      {
-        return baseSelectorFactory.getColumnCapabilities(columnName);
-      }
-    }
-
-    return virtualColumns.wrap(new IncrementalIndexInputRowColumnSelectorFactory());
-  }
-
   protected final long minTimestamp;
   private final Granularity gran;
   private final boolean rollup;
   private final List<Function<InputRow, InputRow>> rowTransformers;
-  private final VirtualColumns virtualColumns;
-  protected final AggregatorFactory[] metrics;
-  private final AggregatorType[] aggs;
-  protected final boolean deserializeComplexMetrics;
   protected final boolean reportParseExceptions;
   private final Metadata metadata;
 
-  private final Map<String, MetricDesc> metricDescs;
-
   private final Map<String, DimensionDesc> dimensionDescs;
   protected final List<DimensionDesc> dimensionDescsList;
-  private final Map<String, ColumnCapabilitiesImpl> columnCapabilities;
+  protected final Map<String, ColumnCapabilitiesImpl> columnCapabilities;
   protected final AtomicInteger numEntries = new AtomicInteger();
 
   // This is modified on add() in a critical section.
@@ -260,27 +130,15 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
     this.minTimestamp = incrementalIndexSchema.getMinTimestamp();
     this.gran = incrementalIndexSchema.getGran();
     this.rollup = incrementalIndexSchema.isRollup();
-    this.virtualColumns = incrementalIndexSchema.getVirtualColumns();
-    this.metrics = incrementalIndexSchema.getMetrics();
     this.rowTransformers = new CopyOnWriteArrayList<>();
-    this.deserializeComplexMetrics = deserializeComplexMetrics;
     this.reportParseExceptions = reportParseExceptions;
 
     this.columnCapabilities = Maps.newHashMap();
     this.metadata = new Metadata()
-        .setAggregators(getCombiningAggregators(metrics))
+        .setAggregators(getCombiningAggregators(incrementalIndexSchema.getMetrics()))
         .setTimestampSpec(incrementalIndexSchema.getTimestampSpec())
         .setQueryGranularity(this.gran)
         .setRollup(this.rollup);
-
-    this.aggs = initAggs(metrics, rowSupplier, deserializeComplexMetrics, concurrentEventAdd);
-
-    this.metricDescs = Maps.newLinkedHashMap();
-    for (AggregatorFactory metric : metrics) {
-      MetricDesc metricDesc = new MetricDesc(metricDescs.size(), metric);
-      metricDescs.put(metricDesc.getName(), metricDesc);
-      columnCapabilities.put(metricDesc.getName(), metricDesc.getCapabilities());
-    }
 
     DimensionsSpec dimensionsSpec = incrementalIndexSchema.getDimensionsSpec();
     this.dimensionDescs = Maps.newLinkedHashMap();
@@ -396,12 +254,12 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
         throw new IllegalArgumentException("Invalid max row count: " + maxRowCount);
       }
 
-      return new OnheapIncrementalIndex(
-          Objects.requireNonNull(incrementalIndexSchema, "incrementIndexSchema is null"),
+      return new OffheapOakIncrementalIndex(
+//      return new OnheapIncrementalIndex(
+          incrementalIndexSchema,
           deserializeComplexMetrics,
           reportParseExceptions,
           concurrentEventAdd,
-          sortFacts,
           maxRowCount
       );
     }
@@ -448,28 +306,21 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
 
   public abstract String getOutOfRowsReason();
 
-  protected abstract AggregatorType[] initAggs(
-      AggregatorFactory[] metrics,
-      Supplier<InputRow> rowSupplier,
-      boolean deserializeComplexMetrics,
-      boolean concurrentEventAdd
-  );
-
   public abstract int getLastRowIndex();
 
   protected abstract AggregatorType[] getAggsForRow(TimeAndDims timeAndDims);
 
-  protected abstract Object getAggVal(AggregatorType agg, TimeAndDims timeAndDims, int aggPosition);
+  protected abstract Object getAggVal(TimeAndDims timeAndDims, int aggIndex);
 
-  protected abstract float getMetricFloatValue(TimeAndDims timeAndDims, int aggOffset);
+  protected abstract float getMetricFloatValue(TimeAndDims timeAndDims, int aggIndex);
 
-  protected abstract long getMetricLongValue(TimeAndDims timeAndDims, int aggOffset);
+  protected abstract long getMetricLongValue(TimeAndDims timeAndDims, int aggIndex);
 
-  protected abstract Object getMetricObjectValue(TimeAndDims timeAndDims, int aggOffset);
+  protected abstract Object getMetricObjectValue(TimeAndDims timeAndDims, int aggIndex);
 
-  protected abstract double getMetricDoubleValue(TimeAndDims timeAndDims, int aggOffset);
+  protected abstract double getMetricDoubleValue(TimeAndDims timeAndDims, int aggIndex);
 
-  protected abstract boolean isNull(TimeAndDims timeAndDims, int aggOffset);
+  protected abstract boolean isNull(TimeAndDims timeAndDims, int aggIndex);
 
   public abstract Iterable<TimeAndDims> timeRangeIterable(boolean descending, long timeStart, long timeEnd);
 
@@ -625,15 +476,9 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
 
   protected abstract long getMaxTimeMillis();
 
-  public AggregatorType[] getAggs()
-  {
-    return aggs;
-  }
+  public abstract AggregatorType[] getAggs();
 
-  public AggregatorFactory[] getMetricAggs()
-  {
-    return metrics;
-  }
+  public abstract AggregatorFactory[] getMetricAggs();
 
   public List<String> getDimensionNames()
   {
@@ -657,34 +502,9 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
   }
 
   @Nullable
-  public String getMetricType(String metric)
-  {
-    final MetricDesc metricDesc = metricDescs.get(metric);
-    return metricDesc != null ? metricDesc.getType() : null;
-  }
+  public abstract String getMetricType(String metric);
 
-  public ColumnValueSelector<?> makeMetricColumnValueSelector(String metric, TimeAndDimsHolder currEntry)
-  {
-    MetricDesc metricDesc = metricDescs.get(metric);
-    if (metricDesc == null) {
-      return NilColumnValueSelector.instance();
-    }
-    int metricIndex = metricDesc.getIndex();
-    switch (metricDesc.getCapabilities().getType()) {
-      case COMPLEX:
-        return new ObjectMetricColumnSelector(metricDesc, currEntry, metricIndex);
-      case LONG:
-        return new LongMetricColumnSelector(currEntry, metricIndex);
-      case FLOAT:
-        return new FloatMetricColumnSelector(currEntry, metricIndex);
-      case DOUBLE:
-        return new DoubleMetricColumnSelector(currEntry, metricIndex);
-      case STRING:
-        throw new IllegalStateException("String is not a metric column type");
-      default:
-        throw new ISE("Unknown metric value type: %s", metricDesc.getCapabilities().getType());
-    }
-  }
+  public abstract ColumnValueSelector<?> makeMetricColumnValueSelector(String metric, TimeAndDimsHolder currEntry);
 
   public Interval getInterval()
   {
@@ -757,10 +577,7 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
     return desc;
   }
 
-  public List<String> getMetricNames()
-  {
-    return ImmutableList.copyOf(metricDescs.keySet());
-  }
+  public abstract List<String> getMetricNames();
 
   @Override
   public List<String> getColumnNames()
@@ -857,56 +674,6 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
     public DimensionIndexer getIndexer()
     {
       return indexer;
-    }
-  }
-
-  public static final class MetricDesc
-  {
-    private final int index;
-    private final String name;
-    private final String type;
-    private final ColumnCapabilitiesImpl capabilities;
-
-    public MetricDesc(int index, AggregatorFactory factory)
-    {
-      this.index = index;
-      this.name = factory.getName();
-
-      String typeInfo = factory.getTypeName();
-      this.capabilities = new ColumnCapabilitiesImpl();
-      if (typeInfo.equalsIgnoreCase("float")) {
-        capabilities.setType(ValueType.FLOAT);
-        this.type = typeInfo;
-      } else if (typeInfo.equalsIgnoreCase("long")) {
-        capabilities.setType(ValueType.LONG);
-        this.type = typeInfo;
-      } else if (typeInfo.equalsIgnoreCase("double")) {
-        capabilities.setType(ValueType.DOUBLE);
-        this.type = typeInfo;
-      } else {
-        capabilities.setType(ValueType.COMPLEX);
-        this.type = ComplexMetrics.getSerdeForType(typeInfo).getTypeName();
-      }
-    }
-
-    public int getIndex()
-    {
-      return index;
-    }
-
-    public String getName()
-    {
-      return name;
-    }
-
-    public String getType()
-    {
-      return type;
-    }
-
-    public ColumnCapabilitiesImpl getCapabilities()
-    {
-      return capabilities;
     }
   }
 
@@ -1027,15 +794,6 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
     }
   }
 
-  protected ColumnSelectorFactory makeColumnSelectorFactory(
-      final AggregatorFactory agg,
-      final Supplier<InputRow> in,
-      final boolean deserializeComplexMetrics
-  )
-  {
-    return makeColumnSelectorFactory(virtualColumns, agg, in, deserializeComplexMetrics);
-  }
-
   protected final Comparator<TimeAndDims> dimsComparator()
   {
     return new TimeAndDimsComp(dimensionDescsList);
@@ -1100,135 +858,5 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
       }
     }
     return true;
-  }
-
-  private class LongMetricColumnSelector implements LongColumnSelector
-  {
-    private final TimeAndDimsHolder currEntry;
-    private final int metricIndex;
-
-    public LongMetricColumnSelector(TimeAndDimsHolder currEntry, int metricIndex)
-    {
-      this.currEntry = currEntry;
-      this.metricIndex = metricIndex;
-    }
-
-    @Override
-    public long getLong()
-    {
-      assert NullHandling.replaceWithDefault() || !isNull();
-      return getMetricLongValue(currEntry.get(), metricIndex);
-    }
-
-    @Override
-    public void inspectRuntimeShape(RuntimeShapeInspector inspector)
-    {
-      inspector.visit("index", IncrementalIndex.this);
-    }
-
-    @Override
-    public boolean isNull()
-    {
-      return IncrementalIndex.this.isNull(currEntry.get(), metricIndex);
-    }
-  }
-
-  private class ObjectMetricColumnSelector extends ObjectColumnSelector
-  {
-    private final TimeAndDimsHolder currEntry;
-    private final int metricIndex;
-    private Class classOfObject;
-
-    public ObjectMetricColumnSelector(
-        MetricDesc metricDesc,
-        TimeAndDimsHolder currEntry,
-        int metricIndex
-    )
-    {
-      this.currEntry = currEntry;
-      this.metricIndex = metricIndex;
-      classOfObject = ComplexMetrics.getSerdeForType(metricDesc.getType()).getObjectStrategy().getClazz();
-    }
-
-    @Nullable
-    @Override
-    public Object getObject()
-    {
-      return getMetricObjectValue(currEntry.get(), metricIndex);
-    }
-
-    @Override
-    public Class classOfObject()
-    {
-      return classOfObject;
-    }
-
-    @Override
-    public void inspectRuntimeShape(RuntimeShapeInspector inspector)
-    {
-      inspector.visit("index", IncrementalIndex.this);
-    }
-  }
-
-  private class FloatMetricColumnSelector implements FloatColumnSelector
-  {
-    private final TimeAndDimsHolder currEntry;
-    private final int metricIndex;
-
-    public FloatMetricColumnSelector(TimeAndDimsHolder currEntry, int metricIndex)
-    {
-      this.currEntry = currEntry;
-      this.metricIndex = metricIndex;
-    }
-
-    @Override
-    public float getFloat()
-    {
-      assert NullHandling.replaceWithDefault() || !isNull();
-      return getMetricFloatValue(currEntry.get(), metricIndex);
-    }
-
-    @Override
-    public void inspectRuntimeShape(RuntimeShapeInspector inspector)
-    {
-      inspector.visit("index", IncrementalIndex.this);
-    }
-
-    @Override
-    public boolean isNull()
-    {
-      return IncrementalIndex.this.isNull(currEntry.get(), metricIndex);
-    }
-  }
-
-  private class DoubleMetricColumnSelector implements DoubleColumnSelector
-  {
-    private final TimeAndDimsHolder currEntry;
-    private final int metricIndex;
-
-    public DoubleMetricColumnSelector(TimeAndDimsHolder currEntry, int metricIndex)
-    {
-      this.currEntry = currEntry;
-      this.metricIndex = metricIndex;
-    }
-
-    @Override
-    public double getDouble()
-    {
-      assert NullHandling.replaceWithDefault() || !isNull();
-      return getMetricDoubleValue(currEntry.get(), metricIndex);
-    }
-
-    @Override
-    public boolean isNull()
-    {
-      return IncrementalIndex.this.isNull(currEntry.get(), metricIndex);
-    }
-
-    @Override
-    public void inspectRuntimeShape(RuntimeShapeInspector inspector)
-    {
-      inspector.visit("index", IncrementalIndex.this);
-    }
   }
 }

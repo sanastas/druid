@@ -19,7 +19,6 @@
 
 package io.druid.segment.incremental;
 
-import com.google.common.base.Supplier;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Maps;
 import com.google.common.primitives.Ints;
@@ -33,11 +32,12 @@ import io.druid.java.util.common.parsers.ParseException;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.BufferAggregator;
 import io.druid.query.aggregation.PostAggregator;
-import io.druid.segment.ColumnSelectorFactory;
+import io.druid.segment.ColumnValueSelector;
 import io.druid.segment.DimensionHandler;
 import io.druid.segment.DimensionIndexer;
 import io.druid.segment.column.ColumnCapabilitiesImpl;
 import io.druid.segment.column.ValueType;
+import io.druid.segment.incremental.OffheapAggsManager.AggBufferInfo;
 
 import java.nio.ByteBuffer;
 import java.util.Comparator;
@@ -72,15 +72,14 @@ public class OffheapOakIncrementalIndex extends
   static final Integer DIMS_INDEX = DIMS_LENGTH_INDEX + Integer.BYTES;
 
   OakMapOffHeapImpl oak;
-  private volatile Map<String, ColumnSelectorFactory> selectors;
-  private volatile int[] aggOffsetInBuffer;
-  private volatile int aggsTotalSize;
   private final int maxRowCount;
   private String outOfRowsReason = null;
+  private OffheapAggsManager aggsManager;
 
   OffheapOakIncrementalIndex(
       io.druid.segment.incremental.IncrementalIndexSchema incrementalIndexSchema,
-      boolean deserializeComplexMetrics, boolean reportParseExceptions,
+      boolean deserializeComplexMetrics,
+      boolean reportParseExceptions,
       boolean concurrentEventAdd,
       int maxRowCount
   )
@@ -89,6 +88,21 @@ public class OffheapOakIncrementalIndex extends
         concurrentEventAdd);
     oak = new OakMapOffHeapImpl(new TimeAndDimsByteBuffersComp(dimensionDescsList), getMinTimeAndDimsByteBuffer());
     this.maxRowCount = maxRowCount;
+
+    Function<TimeAndDims, OffheapAggsManager.AggBufferInfo> getAggsBuffer = new Function<TimeAndDims, AggBufferInfo>() {
+      @Override
+      public AggBufferInfo apply(TimeAndDims timeAndDims)
+      {
+        ByteBuffer serializedKey = timeAndDimsSerialization(timeAndDims);
+        WritableOakBufferImpl oakValue = (WritableOakBufferImpl) oak.get(serializedKey);
+        ByteBuffer aggBuffer = oakValue.getByteBuffer();
+        Integer position = aggBuffer.position();
+        return new AggBufferInfo(aggBuffer, position);
+      }
+    };
+
+    this.aggsManager = new OffheapAggsManager(incrementalIndexSchema, deserializeComplexMetrics,
+            reportParseExceptions, concurrentEventAdd, rowSupplier, getAggsBuffer, columnCapabilities, this);
   }
 
   @Override
@@ -146,7 +160,7 @@ public class OffheapOakIncrementalIndex extends
 
       BufferAggregator[] aggs = getAggs();
       for (int i = 0; i < aggs.length; ++i) {
-        theVals.put(metrics[i].getName(), aggs[i].get(value, aggOffsetInBuffer[i]));
+        theVals.put(aggsManager.metrics[i].getName(), aggs[i].get(value, aggsManager.aggOffsetInBuffer[i]));
       }
 
       if (postAggs != null) {
@@ -186,62 +200,39 @@ public class OffheapOakIncrementalIndex extends
   }
 
   @Override
-  protected Object getAggVal(BufferAggregator agg, TimeAndDims timeAndDims, int aggPosition)
+  protected Object getAggVal(TimeAndDims timeAndDims, int aggIndex)
   {
-    ByteBuffer serializedKey = timeAndDimsSerialization(timeAndDims);
-    WritableOakBufferImpl oakValue = (WritableOakBufferImpl) oak.get(serializedKey);
-    ByteBuffer aggBuffer = oakValue.getByteBuffer();
-    return agg.get(aggBuffer, aggBuffer.position() + aggOffsetInBuffer[aggPosition]);
+    return aggsManager.getAggVal(timeAndDims, aggIndex);
   }
 
   @Override
-  protected float getMetricFloatValue(TimeAndDims timeAndDims, int aggOffset)
+  protected float getMetricFloatValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    BufferAggregator agg = getAggs()[aggOffset];
-    ByteBuffer serializedKey = timeAndDimsSerialization(timeAndDims);
-    WritableOakBufferImpl oakValue = (WritableOakBufferImpl) oak.get(serializedKey);
-    ByteBuffer aggBuffer = oakValue.getByteBuffer();
-    return agg.getFloat(aggBuffer, aggBuffer.position() + aggOffsetInBuffer[aggOffset]);
+    return aggsManager.getMetricFloatValue(timeAndDims, aggIndex);
   }
 
   @Override
-  protected long getMetricLongValue(TimeAndDims timeAndDims, int aggOffset)
+  protected long getMetricLongValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    BufferAggregator agg = getAggs()[aggOffset];
-    ByteBuffer serializedKey = timeAndDimsSerialization(timeAndDims);
-    WritableOakBufferImpl oakValue = (WritableOakBufferImpl) oak.get(serializedKey);
-    ByteBuffer aggBuffer = oakValue.getByteBuffer();
-    return agg.getLong(aggBuffer, aggBuffer.position() + aggOffsetInBuffer[aggOffset]);
+    return aggsManager.getMetricLongValue(timeAndDims, aggIndex);
   }
 
   @Override
-  protected Object getMetricObjectValue(TimeAndDims timeAndDims, int aggOffset)
+  protected Object getMetricObjectValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    BufferAggregator agg = getAggs()[aggOffset];
-    ByteBuffer serializedKey = timeAndDimsSerialization(timeAndDims);
-    WritableOakBufferImpl oakValue = (WritableOakBufferImpl) oak.get(serializedKey);
-    ByteBuffer aggBuffer = oakValue.getByteBuffer();
-    return agg.get(aggBuffer, aggBuffer.position() + aggOffsetInBuffer[aggOffset]);
+    return aggsManager.getMetricObjectValue(timeAndDims, aggIndex);
   }
 
   @Override
-  protected double getMetricDoubleValue(TimeAndDims timeAndDims, int aggOffset)
+  protected double getMetricDoubleValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    BufferAggregator agg = getAggs()[aggOffset];
-    ByteBuffer serializedKey = timeAndDimsSerialization(timeAndDims);
-    WritableOakBufferImpl oakValue = (WritableOakBufferImpl) oak.get(serializedKey);
-    ByteBuffer aggBuffer = oakValue.getByteBuffer();
-    return agg.getDouble(aggBuffer, aggBuffer.position() + aggOffsetInBuffer[aggOffset]);
+    return aggsManager.getMetricDoubleValue(timeAndDims, aggIndex);
   }
 
   @Override
-  protected boolean isNull(TimeAndDims timeAndDims, int aggOffset)
+  protected boolean isNull(TimeAndDims timeAndDims, int aggIndex)
   {
-    BufferAggregator agg = getAggs()[aggOffset];
-    ByteBuffer serializedKey = timeAndDimsSerialization(timeAndDims);
-    WritableOakBufferImpl oakValue = (WritableOakBufferImpl) oak.get(serializedKey);
-    ByteBuffer aggBuffer = oakValue.getByteBuffer();
-    return agg.isNull(aggBuffer, aggBuffer.position() + aggOffsetInBuffer[aggOffset]);
+    return aggsManager.isNull(timeAndDims, aggIndex);
   }
 
   @Override
@@ -317,11 +308,11 @@ public class OffheapOakIncrementalIndex extends
   {
     ByteBuffer serializedKey = timeAndDimsSerialization(key);
     OffheapOakCreateValueConsumer valueCreator = new OffheapOakCreateValueConsumer(metrics, reportParseExceptions,
-            row, rowContainer, getAggs(), selectors, aggOffsetInBuffer);
+            row, rowContainer, getAggs(), aggsManager.selectors, aggsManager.aggOffsetInBuffer);
     OffheapOakComputeConsumer func = new OffheapOakComputeConsumer(metrics, reportParseExceptions, row, rowContainer,
-            aggOffsetInBuffer, getAggs());
+            aggsManager.aggOffsetInBuffer, getAggs());
     if (numEntries.get() < maxRowCount || skipMaxRowsInMemoryCheck) {
-      oak.putIfAbsentComputeIfPresent(serializedKey, valueCreator, aggsTotalSize, func);
+      oak.putIfAbsentComputeIfPresent(serializedKey, valueCreator, aggsManager.aggsTotalSize, func);
       if (func.executed() == false) { // a put operation was executed
         numEntries.incrementAndGet();
       }
@@ -334,39 +325,15 @@ public class OffheapOakIncrementalIndex extends
   }
 
   @Override
-  protected BufferAggregator[] initAggs(
-      AggregatorFactory[] metrics,
-      Supplier<InputRow> rowSupplier,
-      boolean deserializeComplexMetrics,
-      boolean concurrentEventAdd
-  )
+  public BufferAggregator[] getAggs()
   {
-    selectors = Maps.newHashMap();
-    aggOffsetInBuffer = new int[metrics.length];
+    return aggsManager.getAggs();
+  }
 
-    for (int i = 0; i < metrics.length; i++) {
-      AggregatorFactory agg = metrics[i];
-
-      ColumnSelectorFactory columnSelectorFactory = makeColumnSelectorFactory(
-              agg,
-              rowSupplier,
-              deserializeComplexMetrics
-      );
-
-      selectors.put(
-              agg.getName(),
-              new OnheapIncrementalIndex.ObjectCachingColumnSelectorFactory(columnSelectorFactory, concurrentEventAdd)
-      );
-
-      if (i == 0) {
-        aggOffsetInBuffer[i] = metrics[i].getMaxIntermediateSize();
-      } else {
-        aggOffsetInBuffer[i] = aggOffsetInBuffer[i - 1] + metrics[i - 1].getMaxIntermediateSize();
-      }
-    }
-    aggsTotalSize += aggOffsetInBuffer[metrics.length - 1] + metrics[metrics.length - 1].getMaxIntermediateSize();
-
-    return new BufferAggregator[metrics.length];
+  @Override
+  public AggregatorFactory[] getMetricAggs()
+  {
+    return aggsManager.getMetricAggs();
   }
 
   public static void aggregate(
@@ -406,7 +373,7 @@ public class OffheapOakIncrementalIndex extends
   {
     TimeAndDims key = toTimeAndDims(row);
     final int rv = addToOak(
-            metrics,
+            aggsManager.metrics,
             reportParseExceptions,
             row,
             numEntries,
@@ -665,4 +632,24 @@ public class OffheapOakIncrementalIndex extends
       return retVal;
     }
   }
+
+  @Nullable
+  @Override
+  public String getMetricType(String metric)
+  {
+    return aggsManager.getMetricType(metric);
+  }
+
+  @Override
+  public ColumnValueSelector<?> makeMetricColumnValueSelector(String metric, TimeAndDimsHolder currEntry)
+  {
+    return aggsManager.makeMetricColumnValueSelector(metric, currEntry);
+  }
+
+  @Override
+  public List<String> getMetricNames()
+  {
+    return aggsManager.getMetricNames();
+  }
+
 }

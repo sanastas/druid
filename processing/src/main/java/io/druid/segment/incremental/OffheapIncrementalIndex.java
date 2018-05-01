@@ -20,7 +20,6 @@
 package io.druid.segment.incremental;
 
 import com.google.common.base.Supplier;
-import com.google.common.collect.Maps;
 import io.druid.collections.NonBlockingPool;
 import io.druid.collections.ResourceHolder;
 import io.druid.data.input.InputRow;
@@ -32,13 +31,15 @@ import io.druid.java.util.common.logger.Logger;
 import io.druid.java.util.common.parsers.ParseException;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.BufferAggregator;
-import io.druid.segment.ColumnSelectorFactory;
+import io.druid.segment.ColumnValueSelector;
+import io.druid.segment.incremental.OffheapAggsManager.AggBufferInfo;
 
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.function.Function;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -58,13 +59,7 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
 
   protected final int maxRowCount;
 
-  private volatile Map<String, ColumnSelectorFactory> selectors;
-
-  //given a ByteBuffer and an offset where all aggregates for a row are stored
-  //offset + aggOffsetInBuffer[i] would give position in ByteBuffer where ith aggregate
-  //is stored
-  private volatile int[] aggOffsetInBuffer;
-  private volatile int aggsTotalSize;
+  protected OffheapAggsManager aggsManager;
 
   private String outOfRowsReason = null;
 
@@ -85,11 +80,26 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
     this.facts = incrementalIndexSchema.isRollup() ? new RollupFactsHolder(sortFacts, dimsComparator(), getDimensions())
                                                    : new PlainFactsHolder(sortFacts);
 
+    Function<TimeAndDims, AggBufferInfo> getAggsBuffer = new Function<TimeAndDims, AggBufferInfo>() {
+      @Override
+      public AggBufferInfo apply(TimeAndDims timeAndDims)
+      {
+        int rowIndex = timeAndDims.getRowIndex();
+        int[] indexAndOffset = indexAndOffsets.get(rowIndex);
+        ByteBuffer aggBuffer = aggBuffers.get(indexAndOffset[0]).get();
+        Integer position = indexAndOffset[1];
+        return new AggBufferInfo(aggBuffer, position);
+      }
+    };
+
+    this.aggsManager = new OffheapAggsManager(incrementalIndexSchema, deserializeComplexMetrics,
+            reportParseExceptions, concurrentEventAdd, rowSupplier, getAggsBuffer, columnCapabilities, this);
+
     //check that stupid pool gives buffers that can hold at least one row's aggregators
     ResourceHolder<ByteBuffer> bb = bufferPool.take();
-    if (bb.get().capacity() < aggsTotalSize) {
+    if (bb.get().capacity() < this.aggsManager.aggsTotalSize) {
       bb.close();
-      throw new IAE("bufferPool buffers capacity must be >= [%s]", aggsTotalSize);
+      throw new IAE("bufferPool buffers capacity must be >= [%s]", this.aggsManager.aggsTotalSize);
     }
     aggBuffers.add(bb);
   }
@@ -101,46 +111,19 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
   }
 
   @Override
-  protected BufferAggregator[] initAggs(
-      final AggregatorFactory[] metrics,
-      final Supplier<InputRow> rowSupplier,
-      final boolean deserializeComplexMetrics,
-      final boolean concurrentEventAdd
-  )
+  public BufferAggregator[] getAggs()
   {
-    selectors = Maps.newHashMap();
-    aggOffsetInBuffer = new int[metrics.length];
+    return aggsManager.getAggs();
+  }
 
-    for (int i = 0; i < metrics.length; i++) {
-      AggregatorFactory agg = metrics[i];
-
-      ColumnSelectorFactory columnSelectorFactory = makeColumnSelectorFactory(
-          agg,
-          rowSupplier,
-          deserializeComplexMetrics
-      );
-
-      selectors.put(
-          agg.getName(),
-          new OnheapIncrementalIndex.ObjectCachingColumnSelectorFactory(columnSelectorFactory, concurrentEventAdd)
-      );
-
-      if (i == 0) {
-        aggOffsetInBuffer[i] = 0;
-      } else {
-        aggOffsetInBuffer[i] = aggOffsetInBuffer[i - 1] + metrics[i - 1].getMaxIntermediateSize();
-      }
-    }
-
-    aggsTotalSize = aggOffsetInBuffer[metrics.length - 1] + metrics[metrics.length - 1].getMaxIntermediateSize();
-
-    return new BufferAggregator[metrics.length];
+  @Override
+  public AggregatorFactory[] getMetricAggs()
+  {
+    return aggsManager.getMetricAggs();
   }
 
   @Override
   protected Integer addToFacts(
-      AggregatorFactory[] metrics,
-      boolean deserializeComplexMetrics,
       boolean reportParseExceptions,
       InputRow row,
       AtomicInteger numEntries,
@@ -162,13 +145,13 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
         bufferOffset = indexAndOffset[1];
         aggBuffer = aggBuffers.get(bufferIndex).get();
       } else {
-        if (metrics.length > 0 && getAggs()[0] == null) {
+        if (aggsManager.metrics.length > 0 && getAggs()[0] == null) {
           // note: creation of Aggregators is done lazily when at least one row from input is available
           // so that FilteredAggregators could be initialized correctly.
           rowContainer.set(row);
-          for (int i = 0; i < metrics.length; i++) {
-            final AggregatorFactory agg = metrics[i];
-            getAggs()[i] = agg.factorizeBuffered(selectors.get(agg.getName()));
+          for (int i = 0; i < aggsManager.metrics.length; i++) {
+            final AggregatorFactory agg = aggsManager.metrics[i];
+            getAggs()[i] = agg.factorizeBuffered(aggsManager.selectors.get(agg.getName()));
           }
           rowContainer.set(null);
         }
@@ -183,9 +166,9 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
           throw new ISE("last row's aggregate's buffer and last buffer index must be same");
         }
 
-        bufferOffset = aggsTotalSize + (lastAggregatorsIndexAndOffset != null ? lastAggregatorsIndexAndOffset[1] : 0);
+        bufferOffset = aggsManager.aggsTotalSize + (lastAggregatorsIndexAndOffset != null ? lastAggregatorsIndexAndOffset[1] : 0);
         if (lastBuffer != null &&
-            lastBuffer.capacity() - bufferOffset >= aggsTotalSize) {
+            lastBuffer.capacity() - bufferOffset >= aggsManager.aggsTotalSize) {
           aggBuffer = lastBuffer;
         } else {
           ResourceHolder<ByteBuffer> bb = bufferPool.take();
@@ -195,8 +178,8 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
           aggBuffer = bb.get();
         }
 
-        for (int i = 0; i < metrics.length; i++) {
-          getAggs()[i].init(aggBuffer, bufferOffset + aggOffsetInBuffer[i]);
+        for (int i = 0; i < aggsManager.metrics.length; i++) {
+          getAggs()[i].init(aggBuffer, bufferOffset + aggsManager.aggOffsetInBuffer[i]);
         }
 
         // Last ditch sanity checks
@@ -220,12 +203,12 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
 
     rowContainer.set(row);
 
-    for (int i = 0; i < metrics.length; i++) {
+    for (int i = 0; i < aggsManager.metrics.length; i++) {
       final BufferAggregator agg = getAggs()[i];
 
       synchronized (agg) {
         try {
-          agg.aggregate(aggBuffer, bufferOffset + aggOffsetInBuffer[i]);
+          agg.aggregate(aggBuffer, bufferOffset + aggsManager.aggOffsetInBuffer[i]);
         }
         catch (ParseException e) {
           // "aggregate" can throw ParseExceptions if a selector expects something but gets something else.
@@ -270,62 +253,39 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
   }
 
   @Override
-  protected Object getAggVal(BufferAggregator agg, TimeAndDims timeAndDims, int aggPosition)
+  protected Object getAggVal(TimeAndDims timeAndDims, int aggIndex)
   {
-    int rowIndex = timeAndDims.getRowIndex();
-    int[] indexAndOffset = indexAndOffsets.get(rowIndex);
-    ByteBuffer bb = aggBuffers.get(indexAndOffset[0]).get();
-    return agg.get(bb, indexAndOffset[1] + aggOffsetInBuffer[aggPosition]);
+    return aggsManager.getAggVal(timeAndDims, aggIndex);
   }
 
   @Override
-  public float getMetricFloatValue(TimeAndDims timeAndDims, int aggOffset)
+  public float getMetricFloatValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    BufferAggregator agg = getAggs()[aggOffset];
-    int rowIndex = timeAndDims.getRowIndex();
-    int[] indexAndOffset = indexAndOffsets.get(rowIndex);
-    ByteBuffer bb = aggBuffers.get(indexAndOffset[0]).get();
-    return agg.getFloat(bb, indexAndOffset[1] + aggOffsetInBuffer[aggOffset]);
+    return aggsManager.getMetricFloatValue(timeAndDims, aggIndex);
   }
 
   @Override
-  public long getMetricLongValue(TimeAndDims timeAndDims, int aggOffset)
+  public long getMetricLongValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    BufferAggregator agg = getAggs()[aggOffset];
-    int rowIndex = timeAndDims.getRowIndex();
-    int[] indexAndOffset = indexAndOffsets.get(rowIndex);
-    ByteBuffer bb = aggBuffers.get(indexAndOffset[0]).get();
-    return agg.getLong(bb, indexAndOffset[1] + aggOffsetInBuffer[aggOffset]);
+    return aggsManager.getMetricLongValue(timeAndDims, aggIndex);
   }
 
   @Override
-  public Object getMetricObjectValue(TimeAndDims timeAndDims, int aggOffset)
+  public Object getMetricObjectValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    BufferAggregator agg = getAggs()[aggOffset];
-    int rowIndex = timeAndDims.getRowIndex();
-    int[] indexAndOffset = indexAndOffsets.get(rowIndex);
-    ByteBuffer bb = aggBuffers.get(indexAndOffset[0]).get();
-    return agg.get(bb, indexAndOffset[1] + aggOffsetInBuffer[aggOffset]);
+    return aggsManager.getMetricObjectValue(timeAndDims, aggIndex);
   }
 
   @Override
-  public double getMetricDoubleValue(TimeAndDims timeAndDims, int aggOffset)
+  public double getMetricDoubleValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    BufferAggregator agg = getAggs()[aggOffset];
-    int rowIndex = timeAndDims.getRowIndex();
-    int[] indexAndOffset = indexAndOffsets.get(rowIndex);
-    ByteBuffer bb = aggBuffers.get(indexAndOffset[0]).get();
-    return agg.getDouble(bb, indexAndOffset[1] + aggOffsetInBuffer[aggOffset]);
+    return aggsManager.getMetricDoubleValue(timeAndDims, aggIndex);
   }
 
   @Override
-  public boolean isNull(TimeAndDims timeAndDims, int aggOffset)
+  public boolean isNull(TimeAndDims timeAndDims, int aggIndex)
   {
-    BufferAggregator agg = getAggs()[aggOffset];
-    int rowIndex = timeAndDims.getRowIndex();
-    int[] indexAndOffset = indexAndOffsets.get(rowIndex);
-    ByteBuffer bb = aggBuffers.get(indexAndOffset[0]).get();
-    return agg.isNull(bb, indexAndOffset[1] + aggOffsetInBuffer[aggOffset]);
+    return aggsManager.isNull(timeAndDims, aggIndex);
   }
 
   /**
@@ -338,9 +298,7 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
     facts.clear();
     indexAndOffsets.clear();
 
-    if (selectors != null) {
-      selectors.clear();
-    }
+    aggsManager.clearSelectors();
 
     Closer c = Closer.create();
     aggBuffers.forEach(c::register);
@@ -351,5 +309,30 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
       throw new RuntimeException(e);
     }
     aggBuffers.clear();
+  }
+
+  @Nullable
+  @Override
+  public String getMetricType(String metric)
+  {
+    return aggsManager.getMetricType(metric);
+  }
+
+  @Override
+  public ColumnValueSelector<?> makeMetricColumnValueSelector(String metric, TimeAndDimsHolder currEntry)
+  {
+    return aggsManager.makeMetricColumnValueSelector(metric, currEntry);
+  }
+
+  @Override
+  public List<String> getMetricNames()
+  {
+    return aggsManager.getMetricNames();
+  }
+
+  @Override
+  protected String getMetricName(int metricIndex)
+  {
+    return aggsManager.metrics[metricIndex].getName();
   }
 }

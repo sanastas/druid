@@ -26,7 +26,6 @@ import com.google.common.collect.Maps;
 import io.druid.data.input.InputRow;
 import io.druid.data.input.MapBasedRow;
 import io.druid.data.input.Row;
-import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.PostAggregator;
 import io.druid.segment.DimensionHandler;
 import io.druid.segment.DimensionIndexer;
@@ -63,8 +62,6 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
 
   // Note: This method needs to be thread safe.
   protected abstract Integer addToFacts(
-          AggregatorFactory[] metrics,
-          boolean deserializeComplexMetrics,
           boolean reportParseExceptions,
           InputRow row,
           AtomicInteger numEntries,
@@ -79,8 +76,6 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
   {
     TimeAndDims key = toTimeAndDims(row);
     final int rv = addToFacts(
-            metrics,
-            deserializeComplexMetrics,
             reportParseExceptions,
             row,
             numEntries,
@@ -102,6 +97,8 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
   {
     return getFacts().getMaxTimeMillis();
   }
+
+  protected abstract String getMetricName(int metricIndex);
 
   public Iterable<io.druid.segment.incremental.IncrementalIndex.TimeAndDims> timeRangeIterable(
       boolean descending, long timeStart, long timeEnd)
@@ -150,7 +147,7 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
 
               AggregatorType[] aggs = getAggsForRow(timeAndDims);
               for (int i = 0; i < aggs.length; ++i) {
-                theVals.put(metrics[i].getName(), getAggVal(aggs[i], timeAndDims, i));
+                theVals.put(getMetricName(i), getAggVal(timeAndDims, i));
               }
 
               if (postAggs != null) {

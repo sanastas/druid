@@ -80,7 +80,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Extending AbstractBenchmark means only runs if explicitly called
  */
 @RunWith(Parameterized.class)
-public class OnheapIncrementalIndexBenchmark extends AbstractBenchmark
+public class OffheapOakIncrementalIndexBenchmark extends AbstractBenchmark
 {
   private static AggregatorFactory[] factories;
   static final int dimensionCount = 5;
@@ -91,16 +91,16 @@ public class OnheapIncrementalIndexBenchmark extends AbstractBenchmark
     ingestAggregatorFactories.add(new CountAggregatorFactory("rows"));
     for (int i = 0; i < dimensionCount; ++i) {
       ingestAggregatorFactories.add(
-          new LongSumAggregatorFactory(
-              StringUtils.format("sumResult%s", i),
-              StringUtils.format("Dim_%s", i)
-          )
+              new LongSumAggregatorFactory(
+                      StringUtils.format("sumResult%s", i),
+                      StringUtils.format("Dim_%s", i)
+              )
       );
       ingestAggregatorFactories.add(
-          new DoubleSumAggregatorFactory(
-              StringUtils.format("doubleSumResult%s", i),
-              StringUtils.format("Dim_%s", i)
-          )
+              new DoubleSumAggregatorFactory(
+                      StringUtils.format("doubleSumResult%s", i),
+                      StringUtils.format("Dim_%s", i)
+              )
       );
     }
     factories = ingestAggregatorFactories.toArray(new AggregatorFactory[0]);
@@ -111,54 +111,54 @@ public class OnheapIncrementalIndexBenchmark extends AbstractBenchmark
     private final AtomicInteger indexIncrement = new AtomicInteger(0);
 
     public MapIncrementalIndex(
-        IncrementalIndexSchema incrementalIndexSchema,
-        boolean deserializeComplexMetrics,
-        boolean reportParseExceptions,
-        boolean concurrentEventAdd,
-        boolean sortFacts,
-        int maxRowCount
+            IncrementalIndexSchema incrementalIndexSchema,
+            boolean deserializeComplexMetrics,
+            boolean reportParseExceptions,
+            boolean concurrentEventAdd,
+            boolean sortFacts,
+            int maxRowCount
     )
     {
       super(
-          incrementalIndexSchema,
-          deserializeComplexMetrics,
-          reportParseExceptions,
-          concurrentEventAdd,
-          sortFacts,
-          maxRowCount
+              incrementalIndexSchema,
+              deserializeComplexMetrics,
+              reportParseExceptions,
+              concurrentEventAdd,
+              sortFacts,
+              maxRowCount
       );
     }
 
     public MapIncrementalIndex(
-        long minTimestamp,
-        Granularity gran,
-        AggregatorFactory[] metrics,
-        int maxRowCount
+            long minTimestamp,
+            Granularity gran,
+            AggregatorFactory[] metrics,
+            int maxRowCount
     )
     {
       super(
-          new IncrementalIndexSchema.Builder()
-            .withMinTimestamp(minTimestamp)
-            .withQueryGranularity(gran)
-            .withMetrics(metrics)
-            .build(),
-        true,
-        true,
-        false,
-        true,
-        maxRowCount
+              new IncrementalIndexSchema.Builder()
+                      .withMinTimestamp(minTimestamp)
+                      .withQueryGranularity(gran)
+                      .withMetrics(metrics)
+                      .build(),
+              true,
+              true,
+              false,
+              true,
+              maxRowCount
       );
     }
 
     @Override
     protected Integer addToFacts(
-        boolean reportParseExceptions,
-        InputRow row,
-        AtomicInteger numEntries,
-        TimeAndDims key,
-        ThreadLocal<InputRow> rowContainer,
-        Supplier<InputRow> rowSupplier,
-        boolean skipMaxRowsInMemoryCheck // ignore for benchmark
+            boolean reportParseExceptions,
+            InputRow row,
+            AtomicInteger numEntries,
+            TimeAndDims key,
+            ThreadLocal<InputRow> rowContainer,
+            Supplier<InputRow> rowSupplier,
+            boolean skipMaxRowsInMemoryCheck // ignore for benchmark
     ) throws IndexSizeExceededException
     {
 
@@ -233,14 +233,14 @@ public class OnheapIncrementalIndexBenchmark extends AbstractBenchmark
   public static Collection<Object[]> getParameters()
   {
     return ImmutableList.<Object[]>of(
-        new Object[]{OnheapIncrementalIndex.class},
-        new Object[]{MapIncrementalIndex.class}
+            new Object[]{OffheapOakIncrementalIndex.class},
+            new Object[]{MapIncrementalIndex.class}
     );
   }
 
-  private final Class<? extends OnheapIncrementalIndex> incrementalIndex;
+  private final Class<? extends OffheapOakIncrementalIndex> incrementalIndex;
 
-  public OnheapIncrementalIndexBenchmark(Class<? extends OnheapIncrementalIndex> incrementalIndex)
+  public OffheapOakIncrementalIndexBenchmark(Class<? extends OffheapOakIncrementalIndex> incrementalIndex)
   {
     this.incrementalIndex = incrementalIndex;
   }
@@ -262,8 +262,8 @@ public class OnheapIncrementalIndexBenchmark extends AbstractBenchmark
   @Test
   @BenchmarkOptions(callgc = true, clock = Clock.REAL_TIME, warmupRounds = 10, benchmarkRounds = 20)
   public void testConcurrentAddRead()
-      throws InterruptedException, ExecutionException, NoSuchMethodException, IllegalAccessException,
-             InvocationTargetException, InstantiationException
+          throws InterruptedException, ExecutionException, NoSuchMethodException, IllegalAccessException,
+          InvocationTargetException, InstantiationException
   {
 
     final int taskCount = 30;
@@ -271,55 +271,55 @@ public class OnheapIncrementalIndexBenchmark extends AbstractBenchmark
     final int elementsPerThread = 1 << 15;
 
     final IncrementalIndex incrementalIndex = this.incrementalIndex.getConstructor(
-        IncrementalIndexSchema.class,
-        boolean.class,
-        boolean.class,
-        boolean.class,
-        boolean.class,
-        int.class
+            IncrementalIndexSchema.class,
+            boolean.class,
+            boolean.class,
+            boolean.class,
+            boolean.class,
+            int.class
     ).newInstance(
-        new IncrementalIndexSchema.Builder().withMetrics(factories).build(),
-        true,
-        true,
-        false,
-        true,
-        elementsPerThread * taskCount
+            new IncrementalIndexSchema.Builder().withMetrics(factories).build(),
+            true,
+            true,
+            false,
+            true,
+            elementsPerThread * taskCount
     );
     final ArrayList<AggregatorFactory> queryAggregatorFactories = new ArrayList<>(dimensionCount + 1);
     queryAggregatorFactories.add(new CountAggregatorFactory("rows"));
     for (int i = 0; i < dimensionCount; ++i) {
       queryAggregatorFactories.add(
-          new LongSumAggregatorFactory(
-              StringUtils.format("sumResult%s", i),
-              StringUtils.format("sumResult%s", i)
-          )
+              new LongSumAggregatorFactory(
+                      StringUtils.format("sumResult%s", i),
+                      StringUtils.format("sumResult%s", i)
+              )
       );
       queryAggregatorFactories.add(
-          new DoubleSumAggregatorFactory(
-              StringUtils.format("doubleSumResult%s", i),
-              StringUtils.format("doubleSumResult%s", i)
-          )
+              new DoubleSumAggregatorFactory(
+                      StringUtils.format("doubleSumResult%s", i),
+                      StringUtils.format("doubleSumResult%s", i)
+              )
       );
     }
 
     final ListeningExecutorService indexExecutor = MoreExecutors.listeningDecorator(
-        Executors.newFixedThreadPool(
-            concurrentThreads,
-            new ThreadFactoryBuilder()
-                .setDaemon(false)
-                .setNameFormat("index-executor-%d")
-                .setPriority(Thread.MIN_PRIORITY)
-                .build()
-        )
+            Executors.newFixedThreadPool(
+                    concurrentThreads,
+                    new ThreadFactoryBuilder()
+                            .setDaemon(false)
+                            .setNameFormat("index-executor-%d")
+                            .setPriority(Thread.MIN_PRIORITY)
+                            .build()
+            )
     );
     final ListeningExecutorService queryExecutor = MoreExecutors.listeningDecorator(
-        Executors.newFixedThreadPool(
-            concurrentThreads,
-            new ThreadFactoryBuilder()
-                .setDaemon(false)
-                .setNameFormat("query-executor-%d")
-                .build()
-        )
+            Executors.newFixedThreadPool(
+                    concurrentThreads,
+                    new ThreadFactoryBuilder()
+                            .setDaemon(false)
+                            .setNameFormat("query-executor-%d")
+                            .build()
+            )
     );
     final long timestamp = System.currentTimeMillis();
     final Interval queryInterval = Intervals.of("1900-01-01T00:00:00Z/2900-01-01T00:00:00Z");
@@ -327,67 +327,67 @@ public class OnheapIncrementalIndexBenchmark extends AbstractBenchmark
     final List<ListenableFuture<?>> queryFutures = new LinkedList<>();
     final Segment incrementalIndexSegment = new IncrementalIndexSegment(incrementalIndex, null);
     final QueryRunnerFactory factory = new TimeseriesQueryRunnerFactory(
-        new TimeseriesQueryQueryToolChest(QueryRunnerTestHelper.NoopIntervalChunkingQueryRunnerDecorator()),
-        new TimeseriesQueryEngine(),
-        QueryRunnerTestHelper.NOOP_QUERYWATCHER
+            new TimeseriesQueryQueryToolChest(QueryRunnerTestHelper.NoopIntervalChunkingQueryRunnerDecorator()),
+            new TimeseriesQueryEngine(),
+            QueryRunnerTestHelper.NOOP_QUERYWATCHER
     );
     final AtomicInteger currentlyRunning = new AtomicInteger(0);
     final AtomicBoolean concurrentlyRan = new AtomicBoolean(false);
     final AtomicBoolean someoneRan = new AtomicBoolean(false);
     for (int j = 0; j < taskCount; j++) {
       indexFutures.add(
-          indexExecutor.submit(
-              new Runnable()
-              {
-                @Override
-                public void run()
-                {
-                  currentlyRunning.incrementAndGet();
-                  try {
-                    for (int i = 0; i < elementsPerThread; i++) {
-                      incrementalIndex.add(getLongRow(timestamp + i, 1, dimensionCount));
-                    }
-                  }
-                  catch (IndexSizeExceededException e) {
-                    throw Throwables.propagate(e);
-                  }
-                  currentlyRunning.decrementAndGet();
-                  someoneRan.set(true);
-                }
-              }
-          )
+              indexExecutor.submit(
+                      new Runnable()
+                      {
+                        @Override
+                        public void run()
+                        {
+                          currentlyRunning.incrementAndGet();
+                          try {
+                            for (int i = 0; i < elementsPerThread; i++) {
+                              incrementalIndex.add(getLongRow(timestamp + i, 1, dimensionCount));
+                            }
+                          }
+                          catch (IndexSizeExceededException e) {
+                            throw Throwables.propagate(e);
+                          }
+                          currentlyRunning.decrementAndGet();
+                          someoneRan.set(true);
+                        }
+                      }
+              )
       );
 
       queryFutures.add(
-          queryExecutor.submit(
-              new Runnable()
-              {
-                @Override
-                public void run()
-                {
-                  QueryRunner<Result<TimeseriesResultValue>> runner = new FinalizeResultsQueryRunner<Result<TimeseriesResultValue>>(
-                      factory.createRunner(incrementalIndexSegment),
-                      factory.getToolchest()
-                  );
-                  TimeseriesQuery query = Druids.newTimeseriesQueryBuilder()
-                                                .dataSource("xxx")
-                                                .granularity(Granularities.ALL)
-                                                .intervals(ImmutableList.of(queryInterval))
-                                                .aggregators(queryAggregatorFactories)
-                                                .build();
-                  Map<String, Object> context = new HashMap<String, Object>();
-                  List<Result<TimeseriesResultValue>> results = runner.run(QueryPlus.wrap(query), context).toList();
-                  for (Result<TimeseriesResultValue> result : results) {
-                    if (someoneRan.get()) {
-                      Assert.assertTrue(result.getValue().getDoubleMetric("doubleSumResult0") > 0);
-                    }
-                  }
-                  if (currentlyRunning.get() > 0) {
-                    concurrentlyRan.set(true);
-                  }
-                }
-              }
-          )
+              queryExecutor.submit(
+                      new Runnable()
+                      {
+                        @Override
+                        public void run()
+                        {
+                          QueryRunner<Result<TimeseriesResultValue>> runner = new FinalizeResultsQueryRunner<Result<TimeseriesResultValue>>(
+                                  factory.createRunner(incrementalIndexSegment),
+                                  factory.getToolchest()
+                          );
+                          TimeseriesQuery query = Druids.newTimeseriesQueryBuilder()
+                                  .dataSource("xxx")
+                                  .granularity(Granularities.ALL)
+                                  .intervals(ImmutableList.of(queryInterval))
+                                  .aggregators(queryAggregatorFactories)
+                                  .build();
+                          Map<String, Object> context = new HashMap<String, Object>();
+                          List<Result<TimeseriesResultValue>> results = runner.run(QueryPlus.wrap(query), context).toList();
+                          for (Result<TimeseriesResultValue> result : results) {
+                            if (someoneRan.get()) {
+                              Assert.assertTrue(result.getValue().getDoubleMetric("doubleSumResult0") > 0);
+                            }
+                          }
+                          if (currentlyRunning.get() > 0) {
+                            concurrentlyRan.set(true);
+                          }
+                        }
+                      }
+              )
       );
 
     }
@@ -399,15 +399,15 @@ public class OnheapIncrementalIndexBenchmark extends AbstractBenchmark
     queryExecutor.shutdown();
     indexExecutor.shutdown();
     QueryRunner<Result<TimeseriesResultValue>> runner = new FinalizeResultsQueryRunner<Result<TimeseriesResultValue>>(
-        factory.createRunner(incrementalIndexSegment),
-        factory.getToolchest()
+            factory.createRunner(incrementalIndexSegment),
+            factory.getToolchest()
     );
     TimeseriesQuery query = Druids.newTimeseriesQueryBuilder()
-                                  .dataSource("xxx")
-                                  .granularity(Granularities.ALL)
-                                  .intervals(ImmutableList.of(queryInterval))
-                                  .aggregators(queryAggregatorFactories)
-                                  .build();
+            .dataSource("xxx")
+            .granularity(Granularities.ALL)
+            .intervals(ImmutableList.of(queryInterval))
+            .aggregators(queryAggregatorFactories)
+            .build();
     Map<String, Object> context = new HashMap<String, Object>();
     List<Result<TimeseriesResultValue>> results = runner.run(QueryPlus.wrap(query), context).toList();
     final int expectedVal = elementsPerThread * taskCount;
@@ -415,14 +415,14 @@ public class OnheapIncrementalIndexBenchmark extends AbstractBenchmark
       Assert.assertEquals(elementsPerThread, result.getValue().getLongMetric("rows").intValue());
       for (int i = 0; i < dimensionCount; ++i) {
         Assert.assertEquals(
-            StringUtils.format("Failed long sum on dimension %d", i),
-            expectedVal,
-            result.getValue().getLongMetric(StringUtils.format("sumResult%s", i)).intValue()
+                StringUtils.format("Failed long sum on dimension %d", i),
+                expectedVal,
+                result.getValue().getLongMetric(StringUtils.format("sumResult%s", i)).intValue()
         );
         Assert.assertEquals(
-            StringUtils.format("Failed double sum on dimension %d", i),
-            expectedVal,
-            result.getValue().getDoubleMetric(StringUtils.format("doubleSumResult%s", i)).intValue()
+                StringUtils.format("Failed double sum on dimension %d", i),
+                expectedVal,
+                result.getValue().getDoubleMetric(StringUtils.format("doubleSumResult%s", i)).intValue()
         );
       }
     }
