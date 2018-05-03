@@ -84,8 +84,10 @@ public class OnheapIncrementalIndexTest
       public void run()
       {
         while (!Thread.interrupted()) {
-          for (IncrementalIndex.TimeAndDims row : index.getFacts().keySet()) {
-            if (index.getMetricLongValue(row.getRowIndex(), 0) != 1) {
+          Iterable<io.druid.segment.incremental.IncrementalIndex.TimeAndDims> iterKeySet =
+              index.keySet();
+          for (io.druid.segment.incremental.IncrementalIndex.TimeAndDims row : iterKeySet) {
+            if (index.getMetricLongValue(row, 0) != 1) {
               checkFailedCount.addAndGet(1);
             }
           }

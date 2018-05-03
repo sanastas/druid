@@ -19,21 +19,18 @@
 
 package io.druid.segment.incremental;
 
-/**
- * This interface is the core "pointer" interface that is used to create {@link io.druid.segment.ColumnValueSelector}s
- * over incremental index. It's counterpart for historical segments is {@link io.druid.segment.data.Offset}.
- */
-public class TimeAndDimsHolder
+
+public abstract class InternalDataIncrementalIndex<AggregatorType> extends IncrementalIndex<AggregatorType>
 {
-  IncrementalIndex.TimeAndDims currEntry = null;
 
-  public IncrementalIndex.TimeAndDims get()
+  protected InternalDataIncrementalIndex(
+      IncrementalIndexSchema incrementalIndexSchema,
+      boolean deserializeComplexMetrics,
+      boolean reportParseExceptions,
+      boolean concurrentEventAdd
+  )
   {
-    return currEntry;
+    super(incrementalIndexSchema, deserializeComplexMetrics, reportParseExceptions, concurrentEventAdd);
   }
 
-  public void set(IncrementalIndex.TimeAndDims currEntry)
-  {
-    this.currEntry = currEntry;
-  }
 }
