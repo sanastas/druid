@@ -22,6 +22,7 @@ package io.druid.segment.incremental;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import io.druid.data.input.MapBasedInputRow;
+import io.druid.java.util.common.logger.Logger;
 import io.druid.query.aggregation.CountAggregatorFactory;
 import org.junit.Assert;
 import org.junit.Test;
@@ -37,6 +38,8 @@ import static io.druid.segment.incremental.IncrementalIndex.TimeAndDims;
  */
 public class TimeAndDimsCompTest
 {
+  private static final Logger log = new Logger(TimeAndDimsCompTest.class);
+
   @Test
   public void testBasic() throws IndexSizeExceededException
   {
@@ -102,7 +105,8 @@ public class TimeAndDimsCompTest
     origTimeAndDims[5] = index.toTimeAndDims(toMapRow(time + 1));
 
     for (int i = 0; i < 6; i++) {
-      serializedTimeAndDims[i] = oakIndex.timeAndDimsSerialization(origTimeAndDims[i]);
+      serializedTimeAndDims[i] = ByteBuffer.allocate(oakIndex.timeAndDimsAllocSize(origTimeAndDims[i]));
+      oakIndex.timeAndDimsSerialization(origTimeAndDims[i], serializedTimeAndDims[i]);
       deserializedTimeAndDims[i] = oakIndex.timeAndDimsDeserialization(serializedTimeAndDims[i]);
       Assert.assertEquals(0, comparator.compare(origTimeAndDims[i], deserializedTimeAndDims[i]));
     }
@@ -130,7 +134,8 @@ public class TimeAndDimsCompTest
 
     ByteBuffer[] timeAndDimsByteBufferArray = new ByteBuffer[6];
     for (int i = 0; i < 6; i++) {
-      timeAndDimsByteBufferArray[i] = oakIndex.timeAndDimsSerialization(timeAndDimsArray[i]);
+      timeAndDimsByteBufferArray[i] = ByteBuffer.allocate(oakIndex.timeAndDimsAllocSize(timeAndDimsArray[i]));
+      oakIndex.timeAndDimsSerialization(timeAndDimsArray[i], timeAndDimsByteBufferArray[i]);
     }
 
     Comparator<ByteBuffer> comparator = oakIndex.dimsByteBufferComparator();

@@ -254,12 +254,12 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
         throw new IllegalArgumentException("Invalid max row count: " + maxRowCount);
       }
 
-      return new OffheapOakIncrementalIndex(
-//      return new OnheapIncrementalIndex(
+      return new OnheapIncrementalIndex(
           incrementalIndexSchema,
           deserializeComplexMetrics,
           reportParseExceptions,
           concurrentEventAdd,
+          sortFacts,
           maxRowCount
       );
     }

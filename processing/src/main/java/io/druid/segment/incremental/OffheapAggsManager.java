@@ -21,6 +21,7 @@ package io.druid.segment.incremental;
 
 import com.google.common.base.Supplier;
 import com.google.common.collect.Maps;
+import io.druid.collections.NonBlockingPool;
 import io.druid.data.input.InputRow;
 import io.druid.java.util.common.logger.Logger;
 import io.druid.query.aggregation.AggregatorFactory;
@@ -42,6 +43,7 @@ public class OffheapAggsManager extends AggsManager<BufferAggregator>
   public volatile int[] aggOffsetInBuffer;
   public volatile int aggsTotalSize;
   private Function<TimeAndDims, AggBufferInfo> getAggsBuffer;
+  NonBlockingPool<ByteBuffer> bufferPool;
 
   /* basic constractor */
   OffheapAggsManager(
@@ -52,12 +54,14 @@ public class OffheapAggsManager extends AggsManager<BufferAggregator>
       Supplier<InputRow> rowSupplier,
       Function<TimeAndDims, AggBufferInfo> getAggsBuffer,
       Map<String, ColumnCapabilitiesImpl> columnCapabilities,
+      NonBlockingPool<ByteBuffer> bufferPool,
       IncrementalIndex incrementalIndex
   )
   {
     super(incrementalIndexSchema, deserializeComplexMetrics, reportParseExceptions,
             concurrentEventAdd, rowSupplier, columnCapabilities, incrementalIndex);
     this.getAggsBuffer = getAggsBuffer;
+    this.bufferPool = bufferPool;
   }
 
   @Override

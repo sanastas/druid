@@ -110,7 +110,7 @@ public class IndexIngestionBenchmark
         )
         .setReportParseExceptions(false)
         .setMaxRowCount(rowsPerSegment * 2)
-        .buildOnheap();
+        .buildOffheapOak();
   }
 
   @Benchmark

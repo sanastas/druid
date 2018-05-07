@@ -48,8 +48,6 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
 {
   private static final Logger log = new Logger(OffheapIncrementalIndex.class);
 
-  private final NonBlockingPool<ByteBuffer> bufferPool;
-
   private final List<ResourceHolder<ByteBuffer>> aggBuffers = new ArrayList<>();
   private final List<int[]> indexAndOffsets = new ArrayList<>();
 
@@ -75,7 +73,6 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
   {
     super(incrementalIndexSchema, deserializeComplexMetrics, reportParseExceptions, concurrentEventAdd);
     this.maxRowCount = maxRowCount;
-    this.bufferPool = bufferPool;
 
     this.facts = incrementalIndexSchema.isRollup() ? new RollupFactsHolder(sortFacts, dimsComparator(), getDimensions())
                                                    : new PlainFactsHolder(sortFacts);
@@ -93,10 +90,11 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
     };
 
     this.aggsManager = new OffheapAggsManager(incrementalIndexSchema, deserializeComplexMetrics,
-            reportParseExceptions, concurrentEventAdd, rowSupplier, getAggsBuffer, columnCapabilities, this);
+            reportParseExceptions, concurrentEventAdd, rowSupplier, getAggsBuffer,
+            columnCapabilities, bufferPool, this);
 
     //check that stupid pool gives buffers that can hold at least one row's aggregators
-    ResourceHolder<ByteBuffer> bb = bufferPool.take();
+    ResourceHolder<ByteBuffer> bb = aggsManager.bufferPool.take();
     if (bb.get().capacity() < this.aggsManager.aggsTotalSize) {
       bb.close();
       throw new IAE("bufferPool buffers capacity must be >= [%s]", this.aggsManager.aggsTotalSize);
@@ -171,7 +169,7 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
             lastBuffer.capacity() - bufferOffset >= aggsManager.aggsTotalSize) {
           aggBuffer = lastBuffer;
         } else {
-          ResourceHolder<ByteBuffer> bb = bufferPool.take();
+          ResourceHolder<ByteBuffer> bb = aggsManager.bufferPool.take();
           aggBuffers.add(bb);
           bufferIndex = aggBuffers.size() - 1;
           bufferOffset = 0;

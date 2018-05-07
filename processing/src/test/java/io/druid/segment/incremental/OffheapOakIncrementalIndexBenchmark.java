@@ -338,55 +338,55 @@ public class OffheapOakIncrementalIndexBenchmark extends AbstractBenchmark
       indexFutures.add(
               indexExecutor.submit(
                       new Runnable()
-                      {
-                        @Override
-                        public void run()
-                        {
-                          currentlyRunning.incrementAndGet();
-                          try {
-                            for (int i = 0; i < elementsPerThread; i++) {
-                              incrementalIndex.add(getLongRow(timestamp + i, 1, dimensionCount));
-                            }
-                          }
-                          catch (IndexSizeExceededException e) {
-                            throw Throwables.propagate(e);
-                          }
-                          currentlyRunning.decrementAndGet();
-                          someoneRan.set(true);
+                  {
+                    @Override
+                    public void run()
+                    {
+                      currentlyRunning.incrementAndGet();
+                      try {
+                        for (int i = 0; i < elementsPerThread; i++) {
+                          incrementalIndex.add(getLongRow(timestamp + i, 1, dimensionCount));
                         }
                       }
+                      catch (IndexSizeExceededException e) {
+                        throw Throwables.propagate(e);
+                      }
+                      currentlyRunning.decrementAndGet();
+                      someoneRan.set(true);
+                    }
+                  }
               )
       );
 
       queryFutures.add(
               queryExecutor.submit(
                       new Runnable()
-                      {
-                        @Override
-                        public void run()
-                        {
-                          QueryRunner<Result<TimeseriesResultValue>> runner = new FinalizeResultsQueryRunner<Result<TimeseriesResultValue>>(
-                                  factory.createRunner(incrementalIndexSegment),
-                                  factory.getToolchest()
-                          );
-                          TimeseriesQuery query = Druids.newTimeseriesQueryBuilder()
-                                  .dataSource("xxx")
-                                  .granularity(Granularities.ALL)
-                                  .intervals(ImmutableList.of(queryInterval))
-                                  .aggregators(queryAggregatorFactories)
-                                  .build();
-                          Map<String, Object> context = new HashMap<String, Object>();
-                          List<Result<TimeseriesResultValue>> results = runner.run(QueryPlus.wrap(query), context).toList();
-                          for (Result<TimeseriesResultValue> result : results) {
-                            if (someoneRan.get()) {
-                              Assert.assertTrue(result.getValue().getDoubleMetric("doubleSumResult0") > 0);
-                            }
-                          }
-                          if (currentlyRunning.get() > 0) {
-                            concurrentlyRan.set(true);
-                          }
+                  {
+                    @Override
+                    public void run()
+                    {
+                      QueryRunner<Result<TimeseriesResultValue>> runner = new FinalizeResultsQueryRunner<Result<TimeseriesResultValue>>(
+                              factory.createRunner(incrementalIndexSegment),
+                              factory.getToolchest()
+                      );
+                      TimeseriesQuery query = Druids.newTimeseriesQueryBuilder()
+                              .dataSource("xxx")
+                              .granularity(Granularities.ALL)
+                              .intervals(ImmutableList.of(queryInterval))
+                              .aggregators(queryAggregatorFactories)
+                              .build();
+                      Map<String, Object> context = new HashMap<String, Object>();
+                      List<Result<TimeseriesResultValue>> results = runner.run(QueryPlus.wrap(query), context).toList();
+                      for (Result<TimeseriesResultValue> result : results) {
+                        if (someoneRan.get()) {
+                          Assert.assertTrue(result.getValue().getDoubleMetric("doubleSumResult0") > 0);
                         }
                       }
+                      if (currentlyRunning.get() > 0) {
+                        concurrentlyRan.set(true);
+                      }
+                    }
+                  }
               )
       );
 

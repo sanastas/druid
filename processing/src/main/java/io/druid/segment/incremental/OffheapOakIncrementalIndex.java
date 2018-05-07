@@ -70,6 +70,9 @@ public class OffheapOakIncrementalIndex extends
   static final Integer TIME_STAMP_INDEX = 0;
   static final Integer DIMS_LENGTH_INDEX = TIME_STAMP_INDEX + Long.BYTES;
   static final Integer DIMS_INDEX = DIMS_LENGTH_INDEX + Integer.BYTES;
+  static final int KEYS_TMP_BUFFER_SIZE = 100;
+
+  static final ThreadLocal<ByteBuffer> bbTl = ThreadLocal.withInitial(() -> ByteBuffer.allocate(KEYS_TMP_BUFFER_SIZE));
 
   OakMapOffHeapImpl oak;
   private final int maxRowCount;
@@ -86,15 +89,36 @@ public class OffheapOakIncrementalIndex extends
   {
     super(incrementalIndexSchema, deserializeComplexMetrics, reportParseExceptions,
         concurrentEventAdd);
-    oak = new OakMapOffHeapImpl(new TimeAndDimsByteBuffersComp(dimensionDescsList), getMinTimeAndDimsByteBuffer());
+
+    TimeAndDims minTimeAndDims = getMinTimeAndDims();
+    int allocSize = timeAndDimsAllocSize(minTimeAndDims);
+    ByteBuffer byteBuffer = bbTl.get();
+    if (byteBuffer == null || byteBuffer.remaining() < allocSize) {
+      bbTl.set(ByteBuffer.allocate(allocSize));
+      byteBuffer = bbTl.get();
+    }
+    byteBuffer.position(0);
+    timeAndDimsSerialization(minTimeAndDims, byteBuffer);
+    byteBuffer.limit(allocSize);
+    oak = new OakMapOffHeapImpl(new TimeAndDimsByteBuffersComp(dimensionDescsList), byteBuffer);
+    byteBuffer.clear();
     this.maxRowCount = maxRowCount;
 
-    Function<TimeAndDims, OffheapAggsManager.AggBufferInfo> getAggsBuffer = new Function<TimeAndDims, AggBufferInfo>() {
+    Function<TimeAndDims, AggBufferInfo> getAggsBuffer = new Function<TimeAndDims, AggBufferInfo>() {
       @Override
       public AggBufferInfo apply(TimeAndDims timeAndDims)
       {
-        ByteBuffer serializedKey = timeAndDimsSerialization(timeAndDims);
-        WritableOakBufferImpl oakValue = (WritableOakBufferImpl) oak.get(serializedKey);
+        ByteBuffer byteBuffer = bbTl.get();
+        int allocSize = timeAndDimsAllocSize(timeAndDims);
+        if (byteBuffer == null || byteBuffer.remaining() < allocSize) {
+          bbTl.set(ByteBuffer.allocate(allocSize));
+          byteBuffer = bbTl.get();
+        }
+        byteBuffer.position(0);
+        timeAndDimsSerialization(timeAndDims, byteBuffer);
+        byteBuffer.limit(allocSize);
+        WritableOakBufferImpl oakValue = (WritableOakBufferImpl) oak.get(byteBuffer);
+        byteBuffer.clear();
         ByteBuffer aggBuffer = oakValue.getByteBuffer();
         Integer position = aggBuffer.position();
         return new AggBufferInfo(aggBuffer, position);
@@ -102,7 +126,8 @@ public class OffheapOakIncrementalIndex extends
     };
 
     this.aggsManager = new OffheapAggsManager(incrementalIndexSchema, deserializeComplexMetrics,
-            reportParseExceptions, concurrentEventAdd, rowSupplier, getAggsBuffer, columnCapabilities, this);
+            reportParseExceptions, concurrentEventAdd, rowSupplier, getAggsBuffer,
+            columnCapabilities, null, this);
   }
 
   @Override
@@ -174,6 +199,12 @@ public class OffheapOakIncrementalIndex extends
   };
 
   @Override
+  public void close()
+  {
+    oak.close();
+  }
+
+  @Override
   protected long getMinTimeMillis()
   {
     ByteBuffer minKey = oak.getMinKey();
@@ -242,15 +273,20 @@ public class OffheapOakIncrementalIndex extends
     if (timeStart > timeEnd) {
       return null;
     }
-    ByteBuffer from = timeAndDimsSerialization(new TimeAndDims(timeStart, null, dimensionDescsList));
-    ByteBuffer to = timeAndDimsSerialization(new TimeAndDims(timeEnd + 1, null, dimensionDescsList));
-    OakMap subMap = oak.subMap(from, true, to, false);
+
+    TimeAndDims from = new TimeAndDims(timeStart, null, dimensionDescsList);
+    TimeAndDims to = new TimeAndDims(timeEnd + 1, null, dimensionDescsList);
+    ByteBuffer fromSerialized = ByteBuffer.allocate(timeAndDimsAllocSize(from));
+    fromSerialized.position(0);
+    ByteBuffer toSerialized = ByteBuffer.allocate(timeAndDimsAllocSize(to));
+    toSerialized.position(0);
+    timeAndDimsSerialization(from, fromSerialized);
+    timeAndDimsSerialization(to, toSerialized);
+    OakMap subMap = oak.subMap(fromSerialized, true, toSerialized, false);
     if (descending == true) {
       subMap = subMap.descendingMap();
     }
-
     CloseableIterator<ByteBuffer> keysIterator = subMap.keysIterator();
-
     return new Iterable<TimeAndDims>() {
       @Override
       public Iterator<TimeAndDims> iterator()
@@ -306,21 +342,30 @@ public class OffheapOakIncrementalIndex extends
       boolean skipMaxRowsInMemoryCheck
   ) throws IndexSizeExceededException
   {
-    ByteBuffer serializedKey = timeAndDimsSerialization(key);
+    int allocSize = timeAndDimsAllocSize(key);
+    ByteBuffer byteBuffer = bbTl.get();
+    if (byteBuffer == null || byteBuffer.remaining() < allocSize) {
+      bbTl.set(ByteBuffer.allocate(allocSize));
+      byteBuffer = bbTl.get();
+    }
+    byteBuffer.position(0);
+    timeAndDimsSerialization(key, byteBuffer);
+    byteBuffer.limit(allocSize);
     OffheapOakCreateValueConsumer valueCreator = new OffheapOakCreateValueConsumer(metrics, reportParseExceptions,
             row, rowContainer, getAggs(), aggsManager.selectors, aggsManager.aggOffsetInBuffer);
     OffheapOakComputeConsumer func = new OffheapOakComputeConsumer(metrics, reportParseExceptions, row, rowContainer,
             aggsManager.aggOffsetInBuffer, getAggs());
     if (numEntries.get() < maxRowCount || skipMaxRowsInMemoryCheck) {
-      oak.putIfAbsentComputeIfPresent(serializedKey, valueCreator, aggsManager.aggsTotalSize, func);
+      oak.putIfAbsentComputeIfPresent(byteBuffer, valueCreator, aggsManager.aggsTotalSize, func);
       if (func.executed() == false) { // a put operation was executed
         numEntries.incrementAndGet();
       }
     } else {
-      if (oak.computeIfPresent(serializedKey, func) == false) { // the key wasn't in oak
+      if (!oak.computeIfPresent(byteBuffer, func)) { // the key wasn't in oak
         throw new IndexSizeExceededException("Maximum number of rows [%d] reached", maxRowCount);
       }
     }
+    byteBuffer.clear();
     return numEntries.get();
   }
 
@@ -385,19 +430,81 @@ public class OffheapOakIncrementalIndex extends
     return rv;
   }
 
-  ByteBuffer timeAndDimsSerialization(TimeAndDims timeAndDims)
+  void timeAndDimsSerialization(TimeAndDims timeAndDims, ByteBuffer buff)
   {
-    int allocSize;
-    ByteBuffer buf;
-    Object[] dims = timeAndDims.getDims();
+    int allocSize = timeAndDimsAllocSize(timeAndDims);
+    if (buff == null || buff.remaining() < allocSize) {
+      return;
+    }
 
+    buff.putLong(timeAndDims.getTimestamp());
+    Object[] dims = timeAndDims.getDims();
+    int dimsLength = (dims == null ? 0 : dims.length);
+    buff.putInt(dimsLength);
+
+    int currDimsIndex = DIMS_INDEX;
+    int currArrayIndex = DIMS_INDEX + ALLOC_PER_DIM * dimsLength;
+    for (int dimIndex = 0; dimIndex < dimsLength; dimIndex++) {
+      ValueType valueType = getDimValueType(dimIndex);
+      if (valueType == null || dims[dimIndex] == null) {
+        buff.putInt(currDimsIndex, NO_DIM);
+        currDimsIndex += ALLOC_PER_DIM;
+        continue;
+      }
+      switch (valueType) {
+        case LONG:
+          buff.putInt(currDimsIndex, valueType.ordinal());
+          currDimsIndex += Integer.BYTES;
+          buff.putLong(currDimsIndex, (Long) dims[dimIndex]);
+          currDimsIndex += Long.BYTES;
+          break;
+        case FLOAT:
+          buff.putInt(currDimsIndex, valueType.ordinal());
+          currDimsIndex += Integer.BYTES;
+          buff.putFloat(currDimsIndex, (Float) dims[dimIndex]);
+          currDimsIndex += Long.BYTES;
+          break;
+        case DOUBLE:
+          buff.putInt(currDimsIndex, valueType.ordinal());
+          currDimsIndex += Integer.BYTES;
+          buff.putDouble(currDimsIndex, (Double) dims[dimIndex]);
+          currDimsIndex += Long.BYTES;
+          break;
+        case STRING:
+          buff.putInt(currDimsIndex, valueType.ordinal()); // writing the value type
+          currDimsIndex += Integer.BYTES;
+          buff.putInt(currDimsIndex, currArrayIndex); // writing the array position
+          currDimsIndex += Integer.BYTES;
+          if (dims[dimIndex] == null) {
+            buff.putInt(currDimsIndex, 0);
+            currDimsIndex += Integer.BYTES;
+            break;
+          }
+          int[] array = (int[]) dims[dimIndex];
+          buff.putInt(currDimsIndex, array.length); // writing the array length
+          currDimsIndex += Integer.BYTES;
+          for (int j = 0; j < array.length; j++) {
+            buff.putInt(currArrayIndex, array[j]);
+            currArrayIndex += Integer.BYTES;
+          }
+          break;
+        default:
+          buff.putInt(currDimsIndex, NO_DIM);
+          currDimsIndex += ALLOC_PER_DIM;
+      }
+    }
+    buff.position(0);
+  }
+
+  public int timeAndDimsAllocSize(TimeAndDims timeAndDims)
+  {
+    if (timeAndDims == null) {
+      return 0;
+    }
+
+    Object[] dims = timeAndDims.getDims();
     if (dims == null) {
-      allocSize = Long.BYTES + Integer.BYTES;
-      buf = ByteBuffer.allocate(allocSize);
-      buf.putLong(timeAndDims.getTimestamp());
-      buf.putInt(0);
-      buf.position(0);
-      return buf;
+      return Long.BYTES + Integer.BYTES;
     }
 
     // When the dimensionDesc's capabilities are of type ValueType.STRING,
@@ -406,9 +513,6 @@ public class OffheapOakIncrementalIndex extends
     int sumOfArrayLengths = 0;
     for (int i = 0; i < dims.length; i++) {
       Object dim = dims[i];
-      DimensionDesc dimensionDesc = getDimensions().get(i);
-      if (dimensionDesc != null) {
-      }
       if (dim == null) {
         continue;
       }
@@ -422,63 +526,7 @@ public class OffheapOakIncrementalIndex extends
     // 2. dims.length
     // 3. the serialization of each dim
     // 4. the array (for dims with capabilities of a String ValueType)
-    allocSize = Long.BYTES + Integer.BYTES + ALLOC_PER_DIM * dims.length + Integer.BYTES * sumOfArrayLengths;
-    buf = ByteBuffer.allocate(allocSize);
-    buf.putLong(timeAndDims.getTimestamp());
-    buf.putInt(dims.length);
-    int currDimsIndex = DIMS_INDEX;
-    int currArrayIndex = DIMS_INDEX + ALLOC_PER_DIM * dims.length;
-    for (int dimIndex = 0; dimIndex < dims.length; dimIndex++) {
-      ValueType valueType = getDimValueType(dimIndex);
-      if (valueType == null || dims[dimIndex] == null) {
-        buf.putInt(currDimsIndex, NO_DIM);
-        currDimsIndex += ALLOC_PER_DIM;
-        continue;
-      }
-      switch (valueType) {
-        case LONG:
-          buf.putInt(currDimsIndex, valueType.ordinal());
-          currDimsIndex += Integer.BYTES;
-          buf.putLong(currDimsIndex, (Long) dims[dimIndex]);
-          currDimsIndex += Long.BYTES;
-          break;
-        case FLOAT:
-          buf.putInt(currDimsIndex, valueType.ordinal());
-          currDimsIndex += Integer.BYTES;
-          buf.putFloat(currDimsIndex, (Float) dims[dimIndex]);
-          currDimsIndex += Long.BYTES;
-          break;
-        case DOUBLE:
-          buf.putInt(currDimsIndex, valueType.ordinal());
-          currDimsIndex += Integer.BYTES;
-          buf.putDouble(currDimsIndex, (Double) dims[dimIndex]);
-          currDimsIndex += Long.BYTES;
-          break;
-        case STRING:
-          buf.putInt(currDimsIndex, valueType.ordinal()); // writing the value type
-          currDimsIndex += Integer.BYTES;
-          buf.putInt(currDimsIndex, currArrayIndex); // writing the array position
-          currDimsIndex += Integer.BYTES;
-          if (dims[dimIndex] == null) {
-            buf.putInt(currDimsIndex, 0);
-            currDimsIndex += Integer.BYTES;
-            break;
-          }
-          int[] array = (int[]) dims[dimIndex];
-          buf.putInt(currDimsIndex, array.length); // writing the array length
-          currDimsIndex += Integer.BYTES;
-          for (int j = 0; j < array.length; j++) {
-            buf.putInt(currArrayIndex, array[j]);
-            currArrayIndex += Integer.BYTES;
-          }
-          break;
-        default:
-          buf.putInt(currDimsIndex, NO_DIM);
-          currDimsIndex += ALLOC_PER_DIM;
-      }
-    }
-    buf.position(0);
-    return buf;
+    return Long.BYTES + Integer.BYTES + ALLOC_PER_DIM * dims.length + Integer.BYTES * sumOfArrayLengths;
   }
 
   TimeAndDims timeAndDimsDeserialization(ByteBuffer buff)
@@ -566,15 +614,9 @@ public class OffheapOakIncrementalIndex extends
     return buff.position() + DIMS_INDEX + dimIndex * ALLOC_PER_DIM;
   }
 
-  private ByteBuffer getMinTimeAndDimsByteBuffer()
+  private TimeAndDims getMinTimeAndDims()
   {
-    Object[] dims = new Object[dimensionDescsList.size()];
-    for (int i = 0; i < dims.length; i++) {
-      dims[i] = null;
-    }
-    TimeAndDims minTimeAndDims = new TimeAndDims(this.minTimestamp, dims, dimensionDescsList);
-    ByteBuffer minTimeAndDimsByteBuffer = timeAndDimsSerialization(minTimeAndDims);
-    return minTimeAndDimsByteBuffer;
+    return new TimeAndDims(this.minTimestamp, null, dimensionDescsList);
   }
 
   public final Comparator<ByteBuffer> dimsByteBufferComparator()

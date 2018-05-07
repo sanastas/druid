@@ -87,7 +87,7 @@ public abstract class AggsManager<AggregatorType>
     for (AggregatorFactory metric : metrics) {
       MetricDesc metricDesc = new MetricDesc(metricDescs.size(), metric);
       metricDescs.put(metricDesc.getName(), metricDesc);
-      columnCapabilities.put(metricDesc.getName(), metricDesc.getCapabilities());
+      this.columnCapabilities.put(metricDesc.getName(), metricDesc.getCapabilities());
     }
   }
 
