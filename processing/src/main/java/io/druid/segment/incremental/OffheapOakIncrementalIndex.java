@@ -32,12 +32,11 @@ import io.druid.java.util.common.parsers.ParseException;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.BufferAggregator;
 import io.druid.query.aggregation.PostAggregator;
+import io.druid.segment.column.ColumnCapabilitiesImpl;
+import io.druid.segment.column.ValueType;
 import io.druid.segment.ColumnValueSelector;
 import io.druid.segment.DimensionHandler;
 import io.druid.segment.DimensionIndexer;
-import io.druid.segment.column.ColumnCapabilitiesImpl;
-import io.druid.segment.column.ValueType;
-import io.druid.segment.incremental.OffheapAggsManager.AggBufferInfo;
 
 import java.nio.ByteBuffer;
 import java.util.Comparator;
@@ -47,7 +46,6 @@ import java.util.function.Function;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import oak.OakMapOffHeapImpl;
-import oak.WritableOakBufferImpl;
 import oak.OakMap;
 import oak.CloseableIterator;
 
@@ -72,7 +70,7 @@ public class OffheapOakIncrementalIndex extends
   static final Integer DIMS_INDEX = DIMS_LENGTH_INDEX + Integer.BYTES;
   static final int KEYS_TMP_BUFFER_SIZE = 100;
 
-  static final ThreadLocal<ByteBuffer> bbTl = ThreadLocal.withInitial(() -> ByteBuffer.allocate(KEYS_TMP_BUFFER_SIZE));
+  static final ThreadLocal<ByteBuffer> localBuff = ThreadLocal.withInitial(() -> ByteBuffer.allocate(KEYS_TMP_BUFFER_SIZE));
 
   OakMapOffHeapImpl oak;
   private final int maxRowCount;
@@ -91,43 +89,28 @@ public class OffheapOakIncrementalIndex extends
         concurrentEventAdd);
 
     TimeAndDims minTimeAndDims = getMinTimeAndDims();
-    int allocSize = timeAndDimsAllocSize(minTimeAndDims);
-    ByteBuffer byteBuffer = bbTl.get();
-    if (byteBuffer == null || byteBuffer.remaining() < allocSize) {
-      bbTl.set(ByteBuffer.allocate(allocSize));
-      byteBuffer = bbTl.get();
-    }
-    byteBuffer.position(0);
-    timeAndDimsSerialization(minTimeAndDims, byteBuffer);
-    byteBuffer.limit(allocSize);
-    oak = new OakMapOffHeapImpl(new TimeAndDimsByteBuffersComp(dimensionDescsList), byteBuffer);
-    byteBuffer.clear();
+    setLocalBuff(minTimeAndDims);
+    oak = new OakMapOffHeapImpl(new TimeAndDimsByteBuffersComp(dimensionDescsList), localBuff.get());
     this.maxRowCount = maxRowCount;
 
-    Function<TimeAndDims, AggBufferInfo> getAggsBuffer = new Function<TimeAndDims, AggBufferInfo>() {
-      @Override
-      public AggBufferInfo apply(TimeAndDims timeAndDims)
-      {
-        ByteBuffer byteBuffer = bbTl.get();
-        int allocSize = timeAndDimsAllocSize(timeAndDims);
-        if (byteBuffer == null || byteBuffer.remaining() < allocSize) {
-          bbTl.set(ByteBuffer.allocate(allocSize));
-          byteBuffer = bbTl.get();
-        }
-        byteBuffer.position(0);
-        timeAndDimsSerialization(timeAndDims, byteBuffer);
-        byteBuffer.limit(allocSize);
-        WritableOakBufferImpl oakValue = (WritableOakBufferImpl) oak.get(byteBuffer);
-        byteBuffer.clear();
-        ByteBuffer aggBuffer = oakValue.getByteBuffer();
-        Integer position = aggBuffer.position();
-        return new AggBufferInfo(aggBuffer, position);
-      }
-    };
-
     this.aggsManager = new OffheapAggsManager(incrementalIndexSchema, deserializeComplexMetrics,
-            reportParseExceptions, concurrentEventAdd, rowSupplier, getAggsBuffer,
+            reportParseExceptions, concurrentEventAdd, rowSupplier,
             columnCapabilities, null, this);
+  }
+
+  private void setLocalBuff(TimeAndDims timeAndDims)
+  {
+    int allocSize = timeAndDimsAllocSize(timeAndDims);
+    if (allocSize == 0) {
+      return;
+    }
+    localBuff.get().clear();
+    if (localBuff.get().remaining() < allocSize) {
+      localBuff.set(ByteBuffer.allocate(allocSize));
+    }
+    localBuff.get().position(0);
+    localBuff.get().limit(allocSize);
+    timeAndDimsSerialization(timeAndDims, localBuff.get());
   }
 
   @Override
@@ -139,19 +122,19 @@ public class OffheapOakIncrementalIndex extends
       public Iterator<Row> iterator()
       {
         OakMap oakMap = descending ? oak.descendingMap() : oak;
-        Function<Map.Entry<ByteBuffer, ByteBuffer>, Row> transformer = new Transformer(postAggs);
+        Function<Map.Entry<ByteBuffer, ByteBuffer>, Row> transformer = new EntryTransformer(postAggs);
         return oakMap.entriesTransformIterator(transformer);
       }
     };
   }
 
   // for oak's transform iterator
-  private class Transformer implements Function<Map.Entry<ByteBuffer, ByteBuffer>, Row>
+  private class EntryTransformer implements Function<Map.Entry<ByteBuffer, ByteBuffer>, Row>
   {
     List<PostAggregator> postAggs;
     final List<DimensionDesc> dimensions;
 
-    public Transformer(List<PostAggregator> postAggs)
+    public EntryTransformer(List<PostAggregator> postAggs)
     {
       this.postAggs = postAggs;
       this.dimensions = getDimensions();
@@ -233,37 +216,97 @@ public class OffheapOakIncrementalIndex extends
   @Override
   protected Object getAggVal(TimeAndDims timeAndDims, int aggIndex)
   {
-    return aggsManager.getAggVal(timeAndDims, aggIndex);
+    setLocalBuff(timeAndDims);
+    Function<ByteBuffer, Object> valueObjectTransformer = new Function<ByteBuffer, Object>() {
+      @Nullable
+      @Override
+      public Object apply(@Nullable ByteBuffer value)
+      {
+        BufferAggregator agg = getAggs()[aggIndex];
+        return agg.get(value, value.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
+      }
+    };
+    return oak.getTransformation(localBuff.get(), valueObjectTransformer);
   }
 
   @Override
   protected float getMetricFloatValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    return aggsManager.getMetricFloatValue(timeAndDims, aggIndex);
+    setLocalBuff(timeAndDims);
+    Function<ByteBuffer, Float> valueObjectTransformer = new Function<ByteBuffer, Float>() {
+      @Nullable
+      @Override
+      public Float apply(@Nullable ByteBuffer value)
+      {
+        BufferAggregator agg = getAggs()[aggIndex];
+        return agg.getFloat(value, value.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
+      }
+    };
+    return oak.getTransformation(localBuff.get(), valueObjectTransformer);
   }
 
   @Override
   protected long getMetricLongValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    return aggsManager.getMetricLongValue(timeAndDims, aggIndex);
+    setLocalBuff(timeAndDims);
+    Function<ByteBuffer, Long> valueObjectTransformer = new Function<ByteBuffer, Long>() {
+      @Nullable
+      @Override
+      public Long apply(@Nullable ByteBuffer value)
+      {
+        BufferAggregator agg = getAggs()[aggIndex];
+        return agg.getLong(value, value.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
+      }
+    };
+    return oak.getTransformation(localBuff.get(), valueObjectTransformer);
   }
 
   @Override
   protected Object getMetricObjectValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    return aggsManager.getMetricObjectValue(timeAndDims, aggIndex);
+    setLocalBuff(timeAndDims);
+    Function<ByteBuffer, Object> valueObjectTransformer = new Function<ByteBuffer, Object>() {
+      @Nullable
+      @Override
+      public Object apply(@Nullable ByteBuffer value)
+      {
+        BufferAggregator agg = getAggs()[aggIndex];
+        return agg.get(value, value.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
+      }
+    };
+    return oak.getTransformation(localBuff.get(), valueObjectTransformer);
   }
 
   @Override
   protected double getMetricDoubleValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    return aggsManager.getMetricDoubleValue(timeAndDims, aggIndex);
+    setLocalBuff(timeAndDims);
+    Function<ByteBuffer, Double> valueObjectTransformer = new Function<ByteBuffer, Double>() {
+      @Nullable
+      @Override
+      public Double apply(@Nullable ByteBuffer value)
+      {
+        BufferAggregator agg = getAggs()[aggIndex];
+        return agg.getDouble(value, value.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
+      }
+    };
+    return oak.getTransformation(localBuff.get(), valueObjectTransformer);
   }
 
   @Override
   protected boolean isNull(TimeAndDims timeAndDims, int aggIndex)
   {
-    return aggsManager.isNull(timeAndDims, aggIndex);
+    setLocalBuff(timeAndDims);
+    Function<ByteBuffer, Boolean> valueObjectTransformer = new Function<ByteBuffer, Boolean>() {
+      @Nullable
+      @Override
+      public Boolean apply(@Nullable ByteBuffer value)
+      {
+        BufferAggregator agg = getAggs()[aggIndex];
+        return agg.isNull(value, value.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
+      }
+    };
+    return oak.getTransformation(localBuff.get(), valueObjectTransformer);
   }
 
   @Override
@@ -337,35 +380,26 @@ public class OffheapOakIncrementalIndex extends
       boolean reportParseExceptions,
       InputRow row,
       AtomicInteger numEntries,
-      IncrementalIndex.TimeAndDims key,
+      TimeAndDims key,
       ThreadLocal<InputRow> rowContainer,
       boolean skipMaxRowsInMemoryCheck
   ) throws IndexSizeExceededException
   {
-    int allocSize = timeAndDimsAllocSize(key);
-    ByteBuffer byteBuffer = bbTl.get();
-    if (byteBuffer == null || byteBuffer.remaining() < allocSize) {
-      bbTl.set(ByteBuffer.allocate(allocSize));
-      byteBuffer = bbTl.get();
-    }
-    byteBuffer.position(0);
-    timeAndDimsSerialization(key, byteBuffer);
-    byteBuffer.limit(allocSize);
+    setLocalBuff(key);
     OffheapOakCreateValueConsumer valueCreator = new OffheapOakCreateValueConsumer(metrics, reportParseExceptions,
             row, rowContainer, getAggs(), aggsManager.selectors, aggsManager.aggOffsetInBuffer);
     OffheapOakComputeConsumer func = new OffheapOakComputeConsumer(metrics, reportParseExceptions, row, rowContainer,
             aggsManager.aggOffsetInBuffer, getAggs());
     if (numEntries.get() < maxRowCount || skipMaxRowsInMemoryCheck) {
-      oak.putIfAbsentComputeIfPresent(byteBuffer, valueCreator, aggsManager.aggsTotalSize, func);
+      oak.putIfAbsentComputeIfPresent(localBuff.get(), valueCreator, aggsManager.aggsTotalSize, func);
       if (func.executed() == false) { // a put operation was executed
         numEntries.incrementAndGet();
       }
     } else {
-      if (!oak.computeIfPresent(byteBuffer, func)) { // the key wasn't in oak
+      if (!oak.computeIfPresent(localBuff.get(), func)) { // the key wasn't in oak
         throw new IndexSizeExceededException("Maximum number of rows [%d] reached", maxRowCount);
       }
     }
-    byteBuffer.clear();
     return numEntries.get();
   }
 

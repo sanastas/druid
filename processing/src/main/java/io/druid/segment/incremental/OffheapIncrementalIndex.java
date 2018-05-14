@@ -32,13 +32,11 @@ import io.druid.java.util.common.parsers.ParseException;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.BufferAggregator;
 import io.druid.segment.ColumnValueSelector;
-import io.druid.segment.incremental.OffheapAggsManager.AggBufferInfo;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.function.Function;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -77,20 +75,8 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
     this.facts = incrementalIndexSchema.isRollup() ? new RollupFactsHolder(sortFacts, dimsComparator(), getDimensions())
                                                    : new PlainFactsHolder(sortFacts);
 
-    Function<TimeAndDims, AggBufferInfo> getAggsBuffer = new Function<TimeAndDims, AggBufferInfo>() {
-      @Override
-      public AggBufferInfo apply(TimeAndDims timeAndDims)
-      {
-        int rowIndex = timeAndDims.getRowIndex();
-        int[] indexAndOffset = indexAndOffsets.get(rowIndex);
-        ByteBuffer aggBuffer = aggBuffers.get(indexAndOffset[0]).get();
-        Integer position = indexAndOffset[1];
-        return new AggBufferInfo(aggBuffer, position);
-      }
-    };
-
     this.aggsManager = new OffheapAggsManager(incrementalIndexSchema, deserializeComplexMetrics,
-            reportParseExceptions, concurrentEventAdd, rowSupplier, getAggsBuffer,
+            reportParseExceptions, concurrentEventAdd, rowSupplier,
             columnCapabilities, bufferPool, this);
 
     //check that stupid pool gives buffers that can hold at least one row's aggregators
@@ -253,37 +239,55 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
   @Override
   protected Object getAggVal(TimeAndDims timeAndDims, int aggIndex)
   {
-    return aggsManager.getAggVal(timeAndDims, aggIndex);
+    int[] indexAndOffset = indexAndOffsets.get(timeAndDims.getRowIndex());
+    ByteBuffer aggBuffer = aggBuffers.get(indexAndOffset[0]).get();
+    BufferAggregator agg = getAggs()[aggIndex];
+    return agg.get(aggBuffer, indexAndOffset[1] + aggsManager.aggOffsetInBuffer[aggIndex]);
   }
 
   @Override
   public float getMetricFloatValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    return aggsManager.getMetricFloatValue(timeAndDims, aggIndex);
+    int[] indexAndOffset = indexAndOffsets.get(timeAndDims.getRowIndex());
+    ByteBuffer aggBuffer = aggBuffers.get(indexAndOffset[0]).get();
+    BufferAggregator agg = getAggs()[aggIndex];
+    return agg.getFloat(aggBuffer, indexAndOffset[1] + aggsManager.aggOffsetInBuffer[aggIndex]);
   }
 
   @Override
   public long getMetricLongValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    return aggsManager.getMetricLongValue(timeAndDims, aggIndex);
+    int[] indexAndOffset = indexAndOffsets.get(timeAndDims.getRowIndex());
+    ByteBuffer aggBuffer = aggBuffers.get(indexAndOffset[0]).get();
+    BufferAggregator agg = getAggs()[aggIndex];
+    return agg.getLong(aggBuffer, indexAndOffset[1] + aggsManager.aggOffsetInBuffer[aggIndex]);
   }
 
   @Override
   public Object getMetricObjectValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    return aggsManager.getMetricObjectValue(timeAndDims, aggIndex);
+    int[] indexAndOffset = indexAndOffsets.get(timeAndDims.getRowIndex());
+    ByteBuffer aggBuffer = aggBuffers.get(indexAndOffset[0]).get();
+    BufferAggregator agg = getAggs()[aggIndex];
+    return agg.get(aggBuffer, indexAndOffset[1] + aggsManager.aggOffsetInBuffer[aggIndex]);
   }
 
   @Override
   public double getMetricDoubleValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    return aggsManager.getMetricDoubleValue(timeAndDims, aggIndex);
+    int[] indexAndOffset = indexAndOffsets.get(timeAndDims.getRowIndex());
+    ByteBuffer aggBuffer = aggBuffers.get(indexAndOffset[0]).get();
+    BufferAggregator agg = getAggs()[aggIndex];
+    return agg.getDouble(aggBuffer, indexAndOffset[1] + aggsManager.aggOffsetInBuffer[aggIndex]);
   }
 
   @Override
   public boolean isNull(TimeAndDims timeAndDims, int aggIndex)
   {
-    return aggsManager.isNull(timeAndDims, aggIndex);
+    int[] indexAndOffset = indexAndOffsets.get(timeAndDims.getRowIndex());
+    ByteBuffer aggBuffer = aggBuffers.get(indexAndOffset[0]).get();
+    BufferAggregator agg = getAggs()[aggIndex];
+    return agg.isNull(aggBuffer, indexAndOffset[1] + aggsManager.aggOffsetInBuffer[aggIndex]);
   }
 
   /**

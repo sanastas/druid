@@ -29,10 +29,9 @@ import io.druid.query.aggregation.BufferAggregator;
 import io.druid.segment.ColumnSelectorFactory;
 
 import java.util.Map;
-import java.util.function.Function;
 
 import io.druid.segment.column.ColumnCapabilitiesImpl;
-import io.druid.segment.incremental.IncrementalIndex.TimeAndDims;
+
 import java.nio.ByteBuffer;
 
 public class OffheapAggsManager extends AggsManager<BufferAggregator>
@@ -42,7 +41,6 @@ public class OffheapAggsManager extends AggsManager<BufferAggregator>
   public volatile Map<String, ColumnSelectorFactory> selectors;
   public volatile int[] aggOffsetInBuffer;
   public volatile int aggsTotalSize;
-  private Function<TimeAndDims, AggBufferInfo> getAggsBuffer;
   NonBlockingPool<ByteBuffer> bufferPool;
 
   /* basic constractor */
@@ -52,7 +50,6 @@ public class OffheapAggsManager extends AggsManager<BufferAggregator>
       final boolean reportParseExceptions,
       final boolean concurrentEventAdd,
       Supplier<InputRow> rowSupplier,
-      Function<TimeAndDims, AggBufferInfo> getAggsBuffer,
       Map<String, ColumnCapabilitiesImpl> columnCapabilities,
       NonBlockingPool<ByteBuffer> bufferPool,
       IncrementalIndex incrementalIndex
@@ -60,7 +57,6 @@ public class OffheapAggsManager extends AggsManager<BufferAggregator>
   {
     super(incrementalIndexSchema, deserializeComplexMetrics, reportParseExceptions,
             concurrentEventAdd, rowSupplier, columnCapabilities, incrementalIndex);
-    this.getAggsBuffer = getAggsBuffer;
     this.bufferPool = bufferPool;
   }
 
@@ -100,76 +96,10 @@ public class OffheapAggsManager extends AggsManager<BufferAggregator>
     return new BufferAggregator[metrics.length];
   }
 
-  @Override
-  public BufferAggregator[] getAggsForRow(TimeAndDims timeAndDims)
-  {
-    return getAggs();
-  }
-
-  @Override
-  public Object getAggVal(TimeAndDims timeAndDims, int aggIndex)
-  {
-    BufferAggregator agg = getAggs()[aggIndex];
-    AggBufferInfo aggBufferInfo = getAggsBuffer.apply(timeAndDims);
-    return agg.get(aggBufferInfo.aggBuffer, aggBufferInfo.position + aggOffsetInBuffer[aggIndex]);
-  }
-
-  @Override
-  public float getMetricFloatValue(TimeAndDims timeAndDims, int aggIndex)
-  {
-    BufferAggregator agg = getAggs()[aggIndex];
-    AggBufferInfo aggBufferInfo = getAggsBuffer.apply(timeAndDims);
-    return agg.getFloat(aggBufferInfo.aggBuffer, aggBufferInfo.position + aggOffsetInBuffer[aggIndex]);
-  }
-
-  @Override
-  public long getMetricLongValue(TimeAndDims timeAndDims, int aggIndex)
-  {
-    BufferAggregator agg = getAggs()[aggIndex];
-    AggBufferInfo aggBufferInfo = getAggsBuffer.apply(timeAndDims);
-    return agg.getLong(aggBufferInfo.aggBuffer, aggBufferInfo.position + aggOffsetInBuffer[aggIndex]);
-  }
-
-  @Override
-  public Object getMetricObjectValue(TimeAndDims timeAndDims, int aggIndex)
-  {
-    BufferAggregator agg = getAggs()[aggIndex];
-    AggBufferInfo aggBufferInfo = getAggsBuffer.apply(timeAndDims);
-    return agg.get(aggBufferInfo.aggBuffer, aggBufferInfo.position + aggOffsetInBuffer[aggIndex]);
-  }
-
-  @Override
-  public double getMetricDoubleValue(TimeAndDims timeAndDims, int aggIndex)
-  {
-    BufferAggregator agg = getAggs()[aggIndex];
-    AggBufferInfo aggBufferInfo = getAggsBuffer.apply(timeAndDims);
-    return agg.getDouble(aggBufferInfo.aggBuffer, aggBufferInfo.position + aggOffsetInBuffer[aggIndex]);
-  }
-
-  @Override
-  public boolean isNull(TimeAndDims timeAndDims, int aggIndex)
-  {
-    BufferAggregator agg = getAggs()[aggIndex];
-    AggBufferInfo aggBufferInfo = getAggsBuffer.apply(timeAndDims);
-    return agg.isNull(aggBufferInfo.aggBuffer, aggBufferInfo.position + aggOffsetInBuffer[aggIndex]);
-  }
-
   public void clearSelectors()
   {
     if (selectors != null) {
       selectors.clear();
-    }
-  }
-
-  public static class AggBufferInfo
-  {
-    ByteBuffer aggBuffer;
-    Integer position;
-
-    public AggBufferInfo(ByteBuffer aggBuffer, Integer position)
-    {
-      this.aggBuffer = aggBuffer;
-      this.position = position;
     }
   }
 }

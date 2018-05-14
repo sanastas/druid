@@ -53,7 +53,7 @@ import java.util.concurrent.TimeUnit;
 @Measurement(iterations = 25)
 public class IndexIngestionBenchmark
 {
-  @Param({"75000"})
+  @Param({"10000", "75000", "100000"})
   private int rowsPerSegment;
 
   @Param({"basic"})
@@ -61,6 +61,9 @@ public class IndexIngestionBenchmark
 
   @Param({"true", "false"})
   private boolean rollup;
+
+  @Param({"false", "true"})
+  private boolean onheap;
 
   private static final Logger log = new Logger(IndexIngestionBenchmark.class);
   private static final int RNG_SEED = 9999;
@@ -91,6 +94,8 @@ public class IndexIngestionBenchmark
       }
       rows.add(row);
     }
+
+    log.info("Building an " + (onheap ? "on-heap" : "Oak") + " incremental index...");
   }
 
   @Setup(Level.Invocation)
@@ -101,16 +106,28 @@ public class IndexIngestionBenchmark
 
   private IncrementalIndex makeIncIndex()
   {
-    return new IncrementalIndex.Builder()
-        .setIndexSchema(
-            new IncrementalIndexSchema.Builder()
-                .withMetrics(schemaInfo.getAggsArray())
-                .withRollup(rollup)
-                .build()
-        )
-        .setReportParseExceptions(false)
-        .setMaxRowCount(rowsPerSegment * 2)
-        .buildOffheapOak();
+    if (onheap) {
+      return new IncrementalIndex.Builder()
+              .setIndexSchema(
+                      new IncrementalIndexSchema.Builder()
+                              .withMetrics(schemaInfo.getAggsArray())
+                              .withRollup(rollup)
+                              .build()
+              )
+              .setReportParseExceptions(false)
+              .setMaxRowCount(rowsPerSegment * 2)
+              .buildOnheap();
+    } else {
+      return new IncrementalIndex.Builder()
+              .setIndexSchema(
+                      new IncrementalIndexSchema.Builder()
+                              .withMetrics(schemaInfo.getAggsArray())
+                              .build()
+              )
+              .setReportParseExceptions(false)
+              .setMaxRowCount(rowsPerSegment * 2)
+              .buildOffheapOak();
+    }
   }
 
   @Benchmark

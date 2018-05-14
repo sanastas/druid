@@ -47,7 +47,6 @@ import io.druid.segment.NilColumnValueSelector;
 import io.druid.segment.serde.ComplexMetricExtractor;
 import io.druid.segment.serde.ComplexMetricSerde;
 import io.druid.segment.serde.ComplexMetrics;
-import io.druid.segment.incremental.IncrementalIndex.TimeAndDims;
 
 import javax.annotation.Nullable;
 import java.util.Map;
@@ -97,20 +96,6 @@ public abstract class AggsManager<AggregatorType>
       boolean deserializeComplexMetrics,
       boolean concurrentEventAdd
   );
-
-  public abstract AggregatorType[] getAggsForRow(TimeAndDims timeAndDims);
-
-  public abstract Object getAggVal(TimeAndDims timeAndDims, int aggIndex);
-
-  public abstract float getMetricFloatValue(TimeAndDims timeAndDims, int aggIndex);
-
-  public abstract long getMetricLongValue(TimeAndDims timeAndDims, int aggIndex);
-
-  public abstract Object getMetricObjectValue(TimeAndDims timeAndDims, int aggIndex);
-
-  public abstract double getMetricDoubleValue(TimeAndDims timeAndDims, int aggIndex);
-
-  public abstract boolean isNull(TimeAndDims timeAndDims, int aggIndex);
 
   public AggregatorType[] getAggs()
   {
@@ -274,7 +259,7 @@ public abstract class AggsManager<AggregatorType>
     public long getLong()
     {
       assert NullHandling.replaceWithDefault() || !isNull();
-      return getMetricLongValue(currEntry.get(), metricIndex);
+      return AggsManager.this.incrementalIndex.getMetricLongValue(currEntry.get(), metricIndex);
     }
 
     @Override
@@ -286,7 +271,7 @@ public abstract class AggsManager<AggregatorType>
     @Override
     public boolean isNull()
     {
-      return AggsManager.this.isNull(currEntry.get(), metricIndex);
+      return AggsManager.this.incrementalIndex.isNull(currEntry.get(), metricIndex);
     }
   }
 
@@ -311,7 +296,7 @@ public abstract class AggsManager<AggregatorType>
     @Override
     public Object getObject()
     {
-      return getMetricObjectValue(currEntry.get(), metricIndex);
+      return AggsManager.this.incrementalIndex.getMetricObjectValue(currEntry.get(), metricIndex);
     }
 
     @Override
@@ -342,7 +327,7 @@ public abstract class AggsManager<AggregatorType>
     public float getFloat()
     {
       assert NullHandling.replaceWithDefault() || !isNull();
-      return getMetricFloatValue(currEntry.get(), metricIndex);
+      return AggsManager.this.incrementalIndex.getMetricFloatValue(currEntry.get(), metricIndex);
     }
 
     @Override
@@ -354,7 +339,7 @@ public abstract class AggsManager<AggregatorType>
     @Override
     public boolean isNull()
     {
-      return AggsManager.this.isNull(currEntry.get(), metricIndex);
+      return AggsManager.this.incrementalIndex.isNull(currEntry.get(), metricIndex);
     }
   }
 
@@ -373,13 +358,13 @@ public abstract class AggsManager<AggregatorType>
     public double getDouble()
     {
       assert NullHandling.replaceWithDefault() || !isNull();
-      return getMetricDoubleValue(currEntry.get(), metricIndex);
+      return AggsManager.this.incrementalIndex.getMetricDoubleValue(currEntry.get(), metricIndex);
     }
 
     @Override
     public boolean isNull()
     {
-      return AggsManager.this.isNull(currEntry.get(), metricIndex);
+      return AggsManager.this.incrementalIndex.isNull(currEntry.get(), metricIndex);
     }
 
     @Override

@@ -35,7 +35,6 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import io.druid.segment.column.ColumnCapabilitiesImpl;
-import io.druid.segment.incremental.IncrementalIndex.TimeAndDims;
 
 public class OnheapAggsManager extends AggsManager<Aggregator>
 {
@@ -130,55 +129,6 @@ public class OnheapAggsManager extends AggsManager<Aggregator>
     }
 
     return new Aggregator[metrics.length];
-  }
-
-  @Override
-  public Aggregator[] getAggsForRow(TimeAndDims timeAndDims)
-  {
-    int rowIndex = timeAndDims.getRowIndex();
-    return concurrentGet(rowIndex);
-  }
-
-  @Override
-  public Object getAggVal(TimeAndDims timeAndDims, int aggIndex)
-  {
-    int rowIndex = timeAndDims.getRowIndex();
-    return concurrentGet(rowIndex)[aggIndex].get();
-  }
-
-  @Override
-  public float getMetricFloatValue(TimeAndDims timeAndDims, int aggIndex)
-  {
-    int rowIndex = timeAndDims.getRowIndex();
-    return concurrentGet(rowIndex)[aggIndex].getFloat();
-  }
-
-  @Override
-  public long getMetricLongValue(TimeAndDims timeAndDims, int aggIndex)
-  {
-    int rowIndex = timeAndDims.getRowIndex();
-    return concurrentGet(rowIndex)[aggIndex].getLong();
-  }
-
-  @Override
-  public Object getMetricObjectValue(TimeAndDims timeAndDims, int aggIndex)
-  {
-    int rowIndex = timeAndDims.getRowIndex();
-    return concurrentGet(rowIndex)[aggIndex].get();
-  }
-
-  @Override
-  public double getMetricDoubleValue(TimeAndDims timeAndDims, int aggIndex)
-  {
-    int rowIndex = timeAndDims.getRowIndex();
-    return concurrentGet(rowIndex)[aggIndex].getDouble();
-  }
-
-  @Override
-  public boolean isNull(TimeAndDims timeAndDims, int aggIndex)
-  {
-    int rowIndex = timeAndDims.getRowIndex();
-    return concurrentGet(rowIndex)[aggIndex].isNull();
   }
 
   public void factorizeAggs(
