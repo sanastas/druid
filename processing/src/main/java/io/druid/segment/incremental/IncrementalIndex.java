@@ -850,7 +850,7 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
     }
   }
 
-  private static boolean allNull(Object[] dims, int startPosition)
+  public static boolean allNull(Object[] dims, int startPosition)
   {
     for (int i = startPosition; i < dims.length; i++) {
       if (dims[i] != null) {

@@ -138,7 +138,7 @@ public class TimeAndDimsCompTest
       oakIndex.timeAndDimsSerialization(timeAndDimsArray[i], timeAndDimsByteBufferArray[i]);
     }
 
-    Comparator<ByteBuffer> comparator = oakIndex.dimsByteBufferComparator();
+    Comparator<Object> comparator = oakIndex.dimsByteBufferComparator();
 
     Assert.assertEquals(0, comparator.compare(timeAndDimsByteBufferArray[0], timeAndDimsByteBufferArray[0]));
     Assert.assertEquals(0, comparator.compare(timeAndDimsByteBufferArray[1], timeAndDimsByteBufferArray[1]));

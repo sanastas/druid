@@ -628,10 +628,10 @@ public class OffheapOakIncrementalIndex extends
     return dimObject;
   }
 
-  static boolean checkDimsAllNull(ByteBuffer buff)
+  static boolean checkDimsAllNull(ByteBuffer buff, int numComparisons)
   {
     int dimsLength = getDimsLength(buff);
-    for (int index = 0; index < dimsLength; index++) {
+    for (int index = 0; index < Math.min(dimsLength, numComparisons); index++) {
       if (buff.getInt(getDimIndexInBuffer(buff, index)) != NO_DIM) {
         return false;
       }
@@ -653,12 +653,12 @@ public class OffheapOakIncrementalIndex extends
     return new TimeAndDims(this.minTimestamp, null, dimensionDescsList);
   }
 
-  public final Comparator<ByteBuffer> dimsByteBufferComparator()
+  public final Comparator<Object> dimsByteBufferComparator()
   {
     return new TimeAndDimsByteBuffersComp(dimensionDescsList);
   }
 
-  static final class TimeAndDimsByteBuffersComp implements Comparator<ByteBuffer>
+  static final class TimeAndDimsByteBuffersComp implements Comparator<Object>
   {
     private List<DimensionDesc> dimensionDescsList;
 
@@ -668,7 +668,24 @@ public class OffheapOakIncrementalIndex extends
     }
 
     @Override
-    public int compare(ByteBuffer lhs, ByteBuffer rhs)
+    public int compare(Object lhs, Object rhs)
+    {
+      if (lhs instanceof ByteBuffer) {
+        if (rhs instanceof ByteBuffer) {
+          return compareByteBuffers((ByteBuffer) lhs, (ByteBuffer) rhs);
+        } else {
+          return compareByteBufferTimeAndDims((ByteBuffer) lhs, (TimeAndDims) rhs);
+        }
+      } else {
+        if (rhs instanceof ByteBuffer) {
+          return compareTimeAndDimsByteBuffer((TimeAndDims) lhs, (ByteBuffer) rhs);
+        } else {
+          return compareTimeAndDims((TimeAndDims) lhs, (TimeAndDims) rhs);
+        }
+      }
+    }
+
+    private int compareByteBuffers(ByteBuffer lhs, ByteBuffer rhs)
     {
       int retVal = Longs.compare(getTimestamp(lhs), getTimestamp(rhs));
       int numComparisons = Math.min(getDimsLength(lhs), getDimsLength(rhs));
@@ -703,9 +720,100 @@ public class OffheapOakIncrementalIndex extends
           return 0;
         }
         ByteBuffer largerDims = lengthDiff > 0 ? lhs : rhs;
-        return checkDimsAllNull(largerDims) ? 0 : lengthDiff;
+        return checkDimsAllNull(largerDims, numComparisons) ? 0 : lengthDiff;
       }
       return retVal;
+    }
+
+    private int compareTimeAndDims(TimeAndDims lhs, TimeAndDims rhs)
+    {
+      int retVal = Longs.compare(lhs.getTimestamp(), rhs.getTimestamp());
+      int lhsDimsLength = lhs.getDims() == null ? 0 : lhs.getDims().length;
+      int rhsDimsLength = rhs.getDims() == null ? 0 : rhs.getDims().length;
+      int numComparisons = Math.min(lhsDimsLength, rhsDimsLength);
+
+      int index = 0;
+      while (retVal == 0 && index < numComparisons) {
+        final Object lhsIdxs = lhs.getDims()[index];
+        final Object rhsIdxs = rhs.getDims()[index];
+
+        if (lhsIdxs == null) {
+          if (rhsIdxs == null) {
+            ++index;
+            continue;
+          }
+          return -1;
+        }
+
+        if (rhsIdxs == null) {
+          return 1;
+        }
+
+        final DimensionIndexer indexer = dimensionDescsList.get(index).getIndexer();
+        retVal = indexer.compareUnsortedEncodedKeyComponents(lhsIdxs, rhsIdxs);
+        ++index;
+      }
+
+      if (retVal == 0) {
+        int lengthDiff = Ints.compare(lhsDimsLength, rhsDimsLength);
+        if (lengthDiff == 0) {
+          return 0;
+        }
+        Object[] largerDims = lengthDiff > 0 ? lhs.getDims() : rhs.getDims();
+        return allNull(largerDims, numComparisons) ? 0 : lengthDiff;
+      }
+
+      return retVal;
+    }
+
+    private int compareTimeAndDimsByteBuffer(TimeAndDims lhs, ByteBuffer rhs)
+    {
+      int retVal = Longs.compare(lhs.getTimestamp(), getTimestamp(rhs));
+      int lhsDimsLength = lhs.getDims() == null ? 0 : lhs.getDims().length;
+      int rhsDimsLength = getDimsLength(rhs);
+      int numComparisons = Math.min(lhsDimsLength, rhsDimsLength);
+
+      int index = 0;
+      while (retVal == 0 && index < numComparisons) {
+        final Object lhsIdxs = lhs.getDims()[index];
+        final Object rhsIdxs = getDimValue(rhs, index);
+
+        if (lhsIdxs == null) {
+          if (rhsIdxs == null) {
+            ++index;
+            continue;
+          }
+          return -1;
+        }
+
+        if (rhsIdxs == null) {
+          return 1;
+        }
+
+        final DimensionIndexer indexer = dimensionDescsList.get(index).getIndexer();
+        retVal = indexer.compareUnsortedEncodedKeyComponents(lhsIdxs, rhsIdxs);
+        ++index;
+      }
+
+      if (retVal == 0) {
+        int lengthDiff = Ints.compare(lhsDimsLength, rhsDimsLength);
+        if (lengthDiff == 0) {
+          return 0;
+        }
+
+        if (lengthDiff > 0) {
+          return allNull(lhs.getDims(), numComparisons) ? 0 : lengthDiff;
+        } else {
+          return checkDimsAllNull(rhs, numComparisons) ? 0 : lengthDiff;
+        }
+      }
+
+      return retVal;
+    }
+
+    private int compareByteBufferTimeAndDims(ByteBuffer lhs, TimeAndDims rhs)
+    {
+      return compare(rhs, lhs) * (-1);
     }
   }
 
