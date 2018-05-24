@@ -68,9 +68,6 @@ public class OffheapOakIncrementalIndex extends
   static final Integer TIME_STAMP_INDEX = 0;
   static final Integer DIMS_LENGTH_INDEX = TIME_STAMP_INDEX + Long.BYTES;
   static final Integer DIMS_INDEX = DIMS_LENGTH_INDEX + Integer.BYTES;
-  static final int KEYS_TMP_BUFFER_SIZE = 100;
-
-  static final ThreadLocal<ByteBuffer> localBuff = ThreadLocal.withInitial(() -> ByteBuffer.allocate(KEYS_TMP_BUFFER_SIZE));
 
   OakMapOffHeapImpl oak;
   private final int maxRowCount;
@@ -82,35 +79,26 @@ public class OffheapOakIncrementalIndex extends
       boolean deserializeComplexMetrics,
       boolean reportParseExceptions,
       boolean concurrentEventAdd,
-      int maxRowCount
+      int maxRowCount,
+      int chunkMaxItems,
+      int chunkBytesPerItem
   )
   {
     super(incrementalIndexSchema, deserializeComplexMetrics, reportParseExceptions,
         concurrentEventAdd);
 
     TimeAndDims minTimeAndDims = getMinTimeAndDims();
-    setLocalBuff(minTimeAndDims);
-    oak = new OakMapOffHeapImpl(new TimeAndDimsByteBuffersComp(dimensionDescsList), localBuff.get());
+    oak = new OakMapOffHeapImpl(new TimeAndDimsByteBuffersComp(dimensionDescsList),
+            minTimeAndDims,
+            new OffheapOakCreateKeyConsumer(dimensionDescsList),
+            new OffheapOakKeyCapacityCalculator(dimensionDescsList),
+            chunkMaxItems,
+            chunkBytesPerItem);
     this.maxRowCount = maxRowCount;
 
     this.aggsManager = new OffheapAggsManager(incrementalIndexSchema, deserializeComplexMetrics,
             reportParseExceptions, concurrentEventAdd, rowSupplier,
             columnCapabilities, null, this);
-  }
-
-  private void setLocalBuff(TimeAndDims timeAndDims)
-  {
-    int allocSize = timeAndDimsAllocSize(timeAndDims);
-    if (allocSize == 0) {
-      return;
-    }
-    localBuff.get().clear();
-    if (localBuff.get().remaining() < allocSize) {
-      localBuff.set(ByteBuffer.allocate(allocSize));
-    }
-    localBuff.get().position(0);
-    localBuff.get().limit(allocSize);
-    timeAndDimsSerialization(timeAndDims, localBuff.get());
   }
 
   @Override
@@ -190,15 +178,13 @@ public class OffheapOakIncrementalIndex extends
   @Override
   protected long getMinTimeMillis()
   {
-    ByteBuffer minKey = oak.getMinKey();
-    return getTimestamp(minKey);
+    return oak.getMinKeyTransformation(buff -> buff.getLong(buff.position() + TIME_STAMP_INDEX));
   }
 
   @Override
   protected long getMaxTimeMillis()
   {
-    ByteBuffer maxKey = oak.getMaxKey();
-    return getTimestamp(maxKey);
+    return oak.getMaxKeyTransformation(buff -> buff.getLong(buff.position() + TIME_STAMP_INDEX));
   }
 
   @Override
@@ -216,97 +202,49 @@ public class OffheapOakIncrementalIndex extends
   @Override
   protected Object getAggVal(TimeAndDims timeAndDims, int aggIndex)
   {
-    setLocalBuff(timeAndDims);
-    Function<ByteBuffer, Object> valueObjectTransformer = new Function<ByteBuffer, Object>() {
-      @Nullable
-      @Override
-      public Object apply(@Nullable ByteBuffer value)
-      {
-        BufferAggregator agg = getAggs()[aggIndex];
-        return agg.get(value, value.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
-      }
-    };
-    return oak.getTransformation(localBuff.get(), valueObjectTransformer);
+    BufferAggregator agg = getAggs()[aggIndex];
+    return oak.getTransformation(timeAndDims, buff -> agg.get(buff,
+            buff.position() + aggsManager.aggOffsetInBuffer[aggIndex]));
   }
 
   @Override
   protected float getMetricFloatValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    setLocalBuff(timeAndDims);
-    Function<ByteBuffer, Float> valueObjectTransformer = new Function<ByteBuffer, Float>() {
-      @Nullable
-      @Override
-      public Float apply(@Nullable ByteBuffer value)
-      {
-        BufferAggregator agg = getAggs()[aggIndex];
-        return agg.getFloat(value, value.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
-      }
-    };
-    return oak.getTransformation(localBuff.get(), valueObjectTransformer);
+    BufferAggregator agg = getAggs()[aggIndex];
+    return oak.getTransformation(timeAndDims, buff -> agg.getFloat(buff,
+            buff.position() + aggsManager.aggOffsetInBuffer[aggIndex]));
   }
 
   @Override
   protected long getMetricLongValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    setLocalBuff(timeAndDims);
-    Function<ByteBuffer, Long> valueObjectTransformer = new Function<ByteBuffer, Long>() {
-      @Nullable
-      @Override
-      public Long apply(@Nullable ByteBuffer value)
-      {
-        BufferAggregator agg = getAggs()[aggIndex];
-        return agg.getLong(value, value.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
-      }
-    };
-    return oak.getTransformation(localBuff.get(), valueObjectTransformer);
+    BufferAggregator agg = getAggs()[aggIndex];
+    return oak.getTransformation(timeAndDims, buff -> agg.getLong(buff,
+            buff.position() + aggsManager.aggOffsetInBuffer[aggIndex]));
   }
 
   @Override
   protected Object getMetricObjectValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    setLocalBuff(timeAndDims);
-    Function<ByteBuffer, Object> valueObjectTransformer = new Function<ByteBuffer, Object>() {
-      @Nullable
-      @Override
-      public Object apply(@Nullable ByteBuffer value)
-      {
-        BufferAggregator agg = getAggs()[aggIndex];
-        return agg.get(value, value.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
-      }
-    };
-    return oak.getTransformation(localBuff.get(), valueObjectTransformer);
+    BufferAggregator agg = getAggs()[aggIndex];
+    return oak.getTransformation(timeAndDims, buff -> agg.get(buff,
+            buff.position() + aggsManager.aggOffsetInBuffer[aggIndex]));
   }
 
   @Override
   protected double getMetricDoubleValue(TimeAndDims timeAndDims, int aggIndex)
   {
-    setLocalBuff(timeAndDims);
-    Function<ByteBuffer, Double> valueObjectTransformer = new Function<ByteBuffer, Double>() {
-      @Nullable
-      @Override
-      public Double apply(@Nullable ByteBuffer value)
-      {
-        BufferAggregator agg = getAggs()[aggIndex];
-        return agg.getDouble(value, value.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
-      }
-    };
-    return oak.getTransformation(localBuff.get(), valueObjectTransformer);
+    BufferAggregator agg = getAggs()[aggIndex];
+    return oak.getTransformation(timeAndDims, buff -> agg.getDouble(buff,
+            buff.position() + aggsManager.aggOffsetInBuffer[aggIndex]));
   }
 
   @Override
   protected boolean isNull(TimeAndDims timeAndDims, int aggIndex)
   {
-    setLocalBuff(timeAndDims);
-    Function<ByteBuffer, Boolean> valueObjectTransformer = new Function<ByteBuffer, Boolean>() {
-      @Nullable
-      @Override
-      public Boolean apply(@Nullable ByteBuffer value)
-      {
-        BufferAggregator agg = getAggs()[aggIndex];
-        return agg.isNull(value, value.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
-      }
-    };
-    return oak.getTransformation(localBuff.get(), valueObjectTransformer);
+    BufferAggregator agg = getAggs()[aggIndex];
+    return oak.getTransformation(timeAndDims, buff -> agg.isNull(buff,
+            buff.position() + aggsManager.aggOffsetInBuffer[aggIndex]));
   }
 
   @Override
@@ -319,13 +257,7 @@ public class OffheapOakIncrementalIndex extends
 
     TimeAndDims from = new TimeAndDims(timeStart, null, dimensionDescsList);
     TimeAndDims to = new TimeAndDims(timeEnd + 1, null, dimensionDescsList);
-    ByteBuffer fromSerialized = ByteBuffer.allocate(timeAndDimsAllocSize(from));
-    fromSerialized.position(0);
-    ByteBuffer toSerialized = ByteBuffer.allocate(timeAndDimsAllocSize(to));
-    toSerialized.position(0);
-    timeAndDimsSerialization(from, fromSerialized);
-    timeAndDimsSerialization(to, toSerialized);
-    OakMap subMap = oak.subMap(fromSerialized, true, toSerialized, false);
+    OakMap subMap = oak.subMap(from, true, to, false);
     if (descending == true) {
       subMap = subMap.descendingMap();
     }
@@ -343,7 +275,7 @@ public class OffheapOakIncrementalIndex extends
   }
 
   @Override
-  public Iterable<IncrementalIndex.TimeAndDims> keySet()
+  public Iterable<TimeAndDims> keySet()
   {
     CloseableIterator<ByteBuffer> keysIterator = oak.keysIterator();
 
@@ -385,18 +317,20 @@ public class OffheapOakIncrementalIndex extends
       boolean skipMaxRowsInMemoryCheck
   ) throws IndexSizeExceededException
   {
-    setLocalBuff(key);
+    OffheapOakCreateKeyConsumer keyCreator = new OffheapOakCreateKeyConsumer(dimensionDescsList);
+    OffheapOakKeyCapacityCalculator keyCapacityCalculator = new OffheapOakKeyCapacityCalculator(dimensionDescsList);
     OffheapOakCreateValueConsumer valueCreator = new OffheapOakCreateValueConsumer(metrics, reportParseExceptions,
             row, rowContainer, getAggs(), aggsManager.selectors, aggsManager.aggOffsetInBuffer);
     OffheapOakComputeConsumer func = new OffheapOakComputeConsumer(metrics, reportParseExceptions, row, rowContainer,
             aggsManager.aggOffsetInBuffer, getAggs());
     if (numEntries.get() < maxRowCount || skipMaxRowsInMemoryCheck) {
-      oak.putIfAbsentComputeIfPresent(localBuff.get(), valueCreator, aggsManager.aggsTotalSize, func);
+      oak.putIfAbsentComputeIfPresent(key, keyCreator, keyCapacityCalculator, valueCreator,
+              aggsManager.aggsTotalSize, func);
       if (func.executed() == false) { // a put operation was executed
         numEntries.incrementAndGet();
       }
     } else {
-      if (!oak.computeIfPresent(localBuff.get(), func)) { // the key wasn't in oak
+      if (!oak.computeIfPresent(key, func)) { // the key wasn't in oak
         throw new IndexSizeExceededException("Maximum number of rows [%d] reached", maxRowCount);
       }
     }

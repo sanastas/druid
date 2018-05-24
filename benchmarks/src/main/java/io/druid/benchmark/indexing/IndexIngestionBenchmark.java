@@ -53,17 +53,23 @@ import java.util.concurrent.TimeUnit;
 @Measurement(iterations = 25)
 public class IndexIngestionBenchmark
 {
-  @Param({"10000", "75000", "100000"})
+  @Param({"75000"})
   private int rowsPerSegment;
 
   @Param({"basic"})
   private String schema;
 
-  @Param({"true", "false"})
+  @Param({"false"})
   private boolean rollup;
 
-  @Param({"false", "true"})
+  @Param({"false"})
   private boolean onheap;
+
+  @Param({"2048", "1024", "512", "256"})
+  private int chunkMaxItems;
+
+  @Param({"100"})
+  private int chunkBytesPerItem;
 
   private static final Logger log = new Logger(IndexIngestionBenchmark.class);
   private static final int RNG_SEED = 9999;
@@ -126,7 +132,7 @@ public class IndexIngestionBenchmark
               )
               .setReportParseExceptions(false)
               .setMaxRowCount(rowsPerSegment * 2)
-              .buildOffheapOak();
+              .buildOffheapOak(chunkMaxItems, chunkBytesPerItem);
     }
   }
 

@@ -78,7 +78,7 @@ public class OffheapOakIncrementalIndexTest
     IncrementalIndex index = new OffheapOakIncrementalIndex.Builder()
             .setSimpleTestingIndexSchema(new CountAggregatorFactory("cnt"))
             .setMaxRowCount(1000)
-            .buildOffheapOak();
+            .buildOffheapOak(2048, 100);
 
     MapBasedInputRow[] rows = new MapBasedInputRow[6];
     long minTime = System.currentTimeMillis() - 1000 * rows.length;
@@ -144,6 +144,7 @@ public class OffheapOakIncrementalIndexTest
     };
 
     keySet.forEach(keySetConsumer);
+    Assert.assertEquals(index.size(), rows.length);
   }
 
   @Test
@@ -210,6 +211,7 @@ public class OffheapOakIncrementalIndexTest
     };
 
     timeRangeIterable.forEach(timeRangeConsumer);
+    Assert.assertEquals(index.size(), rows.length);
 
   }
 
@@ -262,6 +264,7 @@ public class OffheapOakIncrementalIndexTest
     };
 
     iterable.forEach(rowConsumer);
+    Assert.assertEquals(index.size(), rows.length);
   }
 
   private OffheapOakIncrementalIndex getIndex()
@@ -304,7 +307,7 @@ public class OffheapOakIncrementalIndexTest
             .setIndexSchema(schema)
             .setDeserializeComplexMetrics(false)
             .setMaxRowCount(1000)
-            .buildOffheapOak();
+            .buildOffheapOak(2048, 100);
 
     return index;
   }

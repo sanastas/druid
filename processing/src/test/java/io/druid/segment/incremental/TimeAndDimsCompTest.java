@@ -86,7 +86,7 @@ public class TimeAndDimsCompTest
     IncrementalIndex index = new IncrementalIndex.Builder()
             .setSimpleTestingIndexSchema(new CountAggregatorFactory("cnt"))
             .setMaxRowCount(1000)
-            .buildOffheapOak();
+            .buildOffheapOak(2048, 100);
 
     OffheapOakIncrementalIndex oakIndex = (OffheapOakIncrementalIndex) index;
 
@@ -118,7 +118,7 @@ public class TimeAndDimsCompTest
     IncrementalIndex index = new OffheapOakIncrementalIndex.Builder()
             .setSimpleTestingIndexSchema(new CountAggregatorFactory("cnt"))
             .setMaxRowCount(1000)
-            .buildOffheapOak();
+            .buildOffheapOak(2048, 100);
 
     OffheapOakIncrementalIndex oakIndex = (OffheapOakIncrementalIndex) index;
 
