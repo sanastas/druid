@@ -308,8 +308,6 @@ public class OffheapOakIncrementalIndex extends
   }
 
   private Integer addToOak(
-      AggregatorFactory[] metrics,
-      boolean reportParseExceptions,
       InputRow row,
       AtomicInteger numEntries,
       TimeAndDims key,
@@ -317,18 +315,26 @@ public class OffheapOakIncrementalIndex extends
       boolean skipMaxRowsInMemoryCheck
   ) throws IndexSizeExceededException
   {
+    //log.info("addToOak. current number of entries = " + numEntries.get());
     OffheapOakCreateKeyConsumer keyCreator = new OffheapOakCreateKeyConsumer(dimensionDescsList);
     OffheapOakKeyCapacityCalculator keyCapacityCalculator = new OffheapOakKeyCapacityCalculator(dimensionDescsList);
-    OffheapOakCreateValueConsumer valueCreator = new OffheapOakCreateValueConsumer(metrics, reportParseExceptions,
-            row, rowContainer, getAggs(), aggsManager.selectors, aggsManager.aggOffsetInBuffer);
-    OffheapOakComputeConsumer func = new OffheapOakComputeConsumer(metrics, reportParseExceptions, row, rowContainer,
-            aggsManager.aggOffsetInBuffer, getAggs());
+    OffheapOakCreateValueConsumer valueCreator = new OffheapOakCreateValueConsumer(aggsManager, reportParseExceptions,
+            row, rowContainer);
+    OffheapOakComputeConsumer func = new OffheapOakComputeConsumer(aggsManager, reportParseExceptions,
+            row, rowContainer);
     if (numEntries.get() < maxRowCount || skipMaxRowsInMemoryCheck) {
       oak.putIfAbsentComputeIfPresent(key, keyCreator, keyCapacityCalculator, valueCreator,
               aggsManager.aggsTotalSize, func);
-      if (func.executed() == false) { // a put operation was executed
-        numEntries.incrementAndGet();
+
+      int currSize = oak.entries();
+      int prev = numEntries.get();
+      while (currSize > prev) {
+        if (numEntries.compareAndSet(prev, currSize)) {
+          break;
+        }
+        prev = numEntries.get();
       }
+
     } else {
       if (!oak.computeIfPresent(key, func)) { // the key wasn't in oak
         throw new IndexSizeExceededException("Maximum number of rows [%d] reached", maxRowCount);
@@ -386,8 +392,6 @@ public class OffheapOakIncrementalIndex extends
   {
     TimeAndDims key = toTimeAndDims(row);
     final int rv = addToOak(
-            aggsManager.metrics,
-            reportParseExceptions,
             row,
             numEntries,
             key,

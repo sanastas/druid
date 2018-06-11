@@ -22,15 +22,18 @@ package io.druid.segment.incremental;
 import java.util.List;
 import java.util.function.Consumer;
 import java.nio.ByteBuffer;
-import java.util.Map.Entry;
 
+import io.druid.java.util.common.logger.Logger;
 import io.druid.segment.column.ColumnCapabilitiesImpl;
 import io.druid.segment.column.ValueType;
 import io.druid.segment.incremental.IncrementalIndex.TimeAndDims;
 import io.druid.segment.incremental.IncrementalIndex.DimensionDesc;
 
-public class OffheapOakCreateKeyConsumer implements Consumer<Entry<Entry<ByteBuffer, Integer>, Object>>
+import oak.OakMap.KeyInfo;
+
+public class OffheapOakCreateKeyConsumer implements Consumer<KeyInfo>
 {
+  private static final Logger log = new Logger(OffheapOakCreateKeyConsumer.class);
   private List<DimensionDesc> dimensionDescsList;
 
   public OffheapOakCreateKeyConsumer(List<DimensionDesc> dimensionDescsList)
@@ -39,17 +42,19 @@ public class OffheapOakCreateKeyConsumer implements Consumer<Entry<Entry<ByteBuf
   }
 
   @Override
-  public void accept(Entry<Entry<ByteBuffer, Integer>, Object> entry)
+  public void accept(KeyInfo keyInfo)
   {
-    TimeAndDims timeAndDims = (TimeAndDims) entry.getValue();
+    TimeAndDims timeAndDims = (TimeAndDims) keyInfo.key;
     long timestamp = timeAndDims.getTimestamp();
     Object[] dims = timeAndDims.getDims();
     int dimsLength = (dims == null ? 0 : dims.length);
 
-    ByteBuffer buff = entry.getKey().getKey();
+    ByteBuffer buff = keyInfo.buffer;
+    int ki = keyInfo.index;
 
     // calculating buffer indexes for writing the key data
-    int buffIndex = buff.position() + entry.getKey().getValue();  // the first byte for writing the key
+    //log.info("OffheapOakCreateKeyConsumer: buff.position() = " + buff.position() + ", ki = " + ki);
+    int buffIndex = buff.position() + ki;  // the first byte for writing the key
     int timeStampIndex = buffIndex;                               // the timestamp index
     int dimsLengthIndex = timeStampIndex + Long.BYTES;            // the dims array length index
     int dimsIndex = dimsLengthIndex + Integer.BYTES;              // the dims array index

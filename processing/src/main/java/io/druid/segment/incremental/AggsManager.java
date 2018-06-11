@@ -51,12 +51,13 @@ import io.druid.segment.serde.ComplexMetrics;
 import javax.annotation.Nullable;
 import java.util.Map;
 import java.util.List;
+import java.util.concurrent.locks.ReentrantLock;
 
 public abstract class AggsManager<AggregatorType>
 {
 
   protected final AggregatorFactory[] metrics;
-  private final AggregatorType[] aggs;
+  protected final AggregatorType[] aggs;
   protected final boolean deserializeComplexMetrics;
   protected final boolean reportParseExceptions;
   private final Map<String, ColumnCapabilitiesImpl> columnCapabilities;
@@ -64,6 +65,8 @@ public abstract class AggsManager<AggregatorType>
 
   protected final Map<String, MetricDesc> metricDescs;
   public IncrementalIndex incrementalIndex;
+
+  public final ReentrantLock[] aggLocks;
 
   public AggsManager(
       final IncrementalIndexSchema incrementalIndexSchema,
@@ -82,6 +85,10 @@ public abstract class AggsManager<AggregatorType>
     this.reportParseExceptions = reportParseExceptions;
     this.columnCapabilities = columnCapabilities;
     this.aggs = initAggs(metrics, rowSupplier, deserializeComplexMetrics, concurrentEventAdd);
+    this.aggLocks = new ReentrantLock[this.aggs.length];
+    for (int i = 0; i < this.aggLocks.length; i++) {
+      this.aggLocks[i] = new ReentrantLock(true);
+    }
     this.metricDescs = Maps.newLinkedHashMap();
     for (AggregatorFactory metric : metrics) {
       MetricDesc metricDesc = new MetricDesc(metricDescs.size(), metric);

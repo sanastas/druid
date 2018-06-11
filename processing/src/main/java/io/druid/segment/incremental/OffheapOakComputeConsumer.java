@@ -20,8 +20,7 @@
 package io.druid.segment.incremental;
 
 import io.druid.data.input.InputRow;
-import io.druid.query.aggregation.AggregatorFactory;
-import io.druid.query.aggregation.BufferAggregator;
+import io.druid.java.util.common.logger.Logger;
 import oak.WritableOakBuffer;
 
 import java.util.function.Consumer;
@@ -31,43 +30,37 @@ import java.util.function.Consumer;
  */
 public class OffheapOakComputeConsumer implements Consumer<WritableOakBuffer>
 {
-  AggregatorFactory[] metrics;
+  private static final Logger log = new Logger(OffheapOakComputeConsumer.class);
+  OffheapAggsManager aggsManager;
   boolean reportParseExceptions;
   InputRow row;
   ThreadLocal<InputRow> rowContainer;
-  int[] aggOffsetInBuffer;
-  BufferAggregator[] aggs;
-  boolean executed; // for figuring out whether a put or a compute was executed
+  int executions; // for figuring out whether a put or a compute was executed
 
   public OffheapOakComputeConsumer(
-      AggregatorFactory[] metrics,
+      OffheapAggsManager aggsManager,
       boolean reportParseExceptions,
       InputRow row,
-      ThreadLocal<InputRow> rowContainer,
-      int[] aggOffsetInBuffer,
-      BufferAggregator[] aggs
+      ThreadLocal<InputRow> rowContainer
   )
   {
-    this.metrics = metrics;
+    this.aggsManager = aggsManager;
     this.reportParseExceptions = reportParseExceptions;
     this.row = row;
     this.rowContainer = rowContainer;
-    this.aggOffsetInBuffer = aggOffsetInBuffer;
-    this.aggs = aggs;
-    this.executed = false;
+    this.executions = 0;
   }
 
   @Override
   public void accept(WritableOakBuffer writableOakBuffer)
   {
-    OffheapOakIncrementalIndex.aggregate(metrics, reportParseExceptions, row, rowContainer,
-            writableOakBuffer.getByteBuffer(), aggOffsetInBuffer, aggs);
-    executed = true;
+    aggsManager.aggregate(reportParseExceptions, row, rowContainer, writableOakBuffer.getByteBuffer());
+    executions++;
 
   }
 
-  public boolean executed()
+  public int executed()
   {
-    return executed;
+    return executions;
   }
 }

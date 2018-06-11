@@ -22,6 +22,7 @@ package io.druid.segment.incremental;
 import java.util.List;
 import java.util.function.Function;
 
+import io.druid.java.util.common.logger.Logger;
 import io.druid.segment.column.ColumnCapabilitiesImpl;
 import io.druid.segment.column.ValueType;
 import io.druid.segment.incremental.IncrementalIndex.TimeAndDims;
@@ -29,6 +30,7 @@ import io.druid.segment.incremental.IncrementalIndex.DimensionDesc;
 
 public class OffheapOakKeyCapacityCalculator implements Function<Object, Integer>
 {
+  private static final Logger log = new Logger(OffheapOakKeyCapacityCalculator.class);
   private List<DimensionDesc> dimensionDescsList;
 
   public OffheapOakKeyCapacityCalculator(List<DimensionDesc> dimensionDescsList)
@@ -70,6 +72,7 @@ public class OffheapOakKeyCapacityCalculator implements Function<Object, Integer
     // 3. the serialization of each dim
     // 4. the array (for dims with capabilities of a String ValueType)
     int dimCapacity = OffheapOakIncrementalIndex.ALLOC_PER_DIM;
+    //log.info("OffheapOakKeyCapacityCalculator: " + (Long.BYTES + Integer.BYTES + dimCapacity * dims.length + Integer.BYTES * sumOfArrayLengths));
     return Long.BYTES + Integer.BYTES + dimCapacity * dims.length + Integer.BYTES * sumOfArrayLengths;
 
   }

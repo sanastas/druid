@@ -29,46 +29,35 @@ import io.druid.query.aggregation.hyperloglog.HyperUniquesSerde;
 import io.druid.segment.incremental.IncrementalIndex;
 import io.druid.segment.incremental.IncrementalIndexSchema;
 import io.druid.segment.serde.ComplexMetrics;
-import org.openjdk.jmh.annotations.Benchmark;
-import org.openjdk.jmh.annotations.BenchmarkMode;
-import org.openjdk.jmh.annotations.Fork;
-import org.openjdk.jmh.annotations.Level;
-import org.openjdk.jmh.annotations.Measurement;
-import org.openjdk.jmh.annotations.Mode;
-import org.openjdk.jmh.annotations.OutputTimeUnit;
-import org.openjdk.jmh.annotations.Param;
-import org.openjdk.jmh.annotations.Scope;
-import org.openjdk.jmh.annotations.Setup;
-import org.openjdk.jmh.annotations.State;
-import org.openjdk.jmh.annotations.Warmup;
+import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @State(Scope.Benchmark)
-@Fork(value = 1)
 @Warmup(iterations = 10)
 @Measurement(iterations = 25)
 public class IndexIngestionBenchmark
 {
-  @Param({"75000"})
+  @Param({"10000", "75000"})
   private int rowsPerSegment;
 
   @Param({"basic"})
   private String schema;
 
-  @Param({"false"})
+  @Param({"true"})
   private boolean rollup;
 
-  @Param({"false"})
+  @Param({"true", "false"})
   private boolean onheap;
 
-  @Param({"2048", "1024", "512", "256"})
+  @Param({"256"})
   private int chunkMaxItems;
 
-  @Param({"100"})
+  @Param({"64"})
   private int chunkBytesPerItem;
 
   private static final Logger log = new Logger(IndexIngestionBenchmark.class);
@@ -77,6 +66,7 @@ public class IndexIngestionBenchmark
   private IncrementalIndex incIndex;
   private ArrayList<InputRow> rows;
   private BenchmarkSchemaInfo schemaInfo;
+  private AtomicInteger version;
 
   @Setup
   public void setup() throws IOException
@@ -102,12 +92,15 @@ public class IndexIngestionBenchmark
     }
 
     log.info("Building an " + (onheap ? "on-heap" : "Oak") + " incremental index...");
+    version = new AtomicInteger(0);
   }
 
-  @Setup(Level.Invocation)
+  @Setup(Level.Iteration)
   public void setup2() throws IOException
   {
     incIndex = makeIncIndex();
+    int prev = version.getAndIncrement();
+    log.info("The index was created. Previuos version: " + prev + ". New version: " + (prev + 1));
   }
 
   private IncrementalIndex makeIncIndex()
@@ -137,14 +130,22 @@ public class IndexIngestionBenchmark
   }
 
   @Benchmark
-  @BenchmarkMode(Mode.AverageTime)
-  @OutputTimeUnit(TimeUnit.MICROSECONDS)
+  @BenchmarkMode(Mode.SingleShotTime)
+  @OutputTimeUnit(TimeUnit.SECONDS)
+  @Threads(1)
   public void addRows(Blackhole blackhole) throws Exception
   {
+    long time = System.currentTimeMillis();
+    int myVersion = version.get();
+    log.info("Time before loop: " + time + ". Version " + myVersion);
     for (int i = 0; i < rowsPerSegment; i++) {
       InputRow row = rows.get(i);
       int rv = incIndex.add(row);
       blackhole.consume(rv);
     }
+    long duration = System.currentTimeMillis() - time;
+    double throughput = (1 * rowsPerSegment) / (double) duration;
+    log.info("Index size: " + incIndex.size() + ". Duration: " + duration + " millis . Version " + myVersion + ". Throughput: " + throughput + " ops/ms");
   }
+
 }

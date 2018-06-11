@@ -20,62 +20,44 @@
 package io.druid.segment.incremental;
 
 import io.druid.data.input.InputRow;
-import io.druid.query.aggregation.AggregatorFactory;
-import io.druid.query.aggregation.BufferAggregator;
-import io.druid.segment.ColumnSelectorFactory;
+import io.druid.java.util.common.logger.Logger;
 
-import java.util.Map;
 import java.util.function.Consumer;
 import java.nio.ByteBuffer;
 
 public class OffheapOakCreateValueConsumer implements Consumer<ByteBuffer>
 {
 
-  AggregatorFactory[] metrics;
+  private static final Logger log = new Logger(OffheapOakCreateValueConsumer.class);
+  OffheapAggsManager aggsManager;
   boolean reportParseExceptions;
   InputRow row;
   ThreadLocal<InputRow> rowContainer;
-  BufferAggregator[] aggs;
-  Map<String, ColumnSelectorFactory> selectors;
-  int[] aggOffsetInBuffer;
+  int executions; // for figuring out whether a put or a compute was executed
 
   public OffheapOakCreateValueConsumer(
-          AggregatorFactory[] metrics,
+          OffheapAggsManager aggsManager,
           boolean reportParseExceptions,
           InputRow row,
-          ThreadLocal<InputRow> rowContainer,
-          BufferAggregator[] aggs,
-          Map<String, ColumnSelectorFactory> selectors,
-          int[] aggOffsetInBuffer
+          ThreadLocal<InputRow> rowContainer
   )
   {
-    this.metrics = metrics;
+    this.aggsManager = aggsManager;
     this.reportParseExceptions = reportParseExceptions;
     this.row = row;
     this.rowContainer = rowContainer;
-    this.aggs = aggs;
-    this.selectors = selectors;
-    this.aggOffsetInBuffer = aggOffsetInBuffer;
+    this.executions = 0;
   }
 
   @Override
   public void accept(ByteBuffer byteBuffer)
   {
-    if (metrics.length > 0 && aggs[0] == null) {
-      // note: creation of Aggregators is done lazily when at least one row from input is available
-      // so that FilteredAggregators could be initialized correctly.
-      rowContainer.set(row);
-      for (int i = 0; i < metrics.length; i++) {
-        final AggregatorFactory agg = metrics[i];
-        aggs[i] = agg.factorizeBuffered(selectors.get(agg.getName()));
-      }
-      rowContainer.set(null);
-    }
+    aggsManager.initValue(byteBuffer, reportParseExceptions, row, rowContainer);
+    executions++;
+  }
 
-    for (int i = 0; i < metrics.length; i++) {
-      aggs[i].init(byteBuffer, aggOffsetInBuffer[i]);
-    }
-
-    OffheapOakIncrementalIndex.aggregate(metrics, reportParseExceptions, row, rowContainer, byteBuffer, aggOffsetInBuffer, aggs);
+  public int executed()
+  {
+    return executions;
   }
 }

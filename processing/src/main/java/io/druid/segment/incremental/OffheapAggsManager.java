@@ -24,6 +24,7 @@ import com.google.common.collect.Maps;
 import io.druid.collections.NonBlockingPool;
 import io.druid.data.input.InputRow;
 import io.druid.java.util.common.logger.Logger;
+import io.druid.java.util.common.parsers.ParseException;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.BufferAggregator;
 import io.druid.segment.ColumnSelectorFactory;
@@ -101,5 +102,61 @@ public class OffheapAggsManager extends AggsManager<BufferAggregator>
     if (selectors != null) {
       selectors.clear();
     }
+  }
+
+  public void initValue(ByteBuffer byteBuffer,
+                        boolean reportParseExceptions,
+                        InputRow row,
+                        ThreadLocal<InputRow> rowContainer)
+  {
+    if (metrics.length > 0 && aggs[aggs.length - 1] == null) {
+      // note: creation of Aggregators is done lazily when at least one row from input is available
+      // so that FilteredAggregators could be initialized correctly.
+      rowContainer.set(row);
+      for (int i = 0; i < metrics.length; i++) {
+        final AggregatorFactory agg = metrics[i];
+        aggLocks[i].lock();
+        if (aggs[i] == null) {
+          aggs[i] = agg.factorizeBuffered(selectors.get(agg.getName()));
+        }
+        aggLocks[i].unlock();
+      }
+      rowContainer.set(null);
+    }
+
+    for (int i = 0; i < metrics.length; i++) {
+      aggs[i].init(byteBuffer, aggOffsetInBuffer[i]);
+    }
+
+    aggregate(reportParseExceptions, row, rowContainer, byteBuffer);
+  }
+
+  public void aggregate(
+          boolean reportParseExceptions,
+          InputRow row,
+          ThreadLocal<InputRow> rowContainer,
+          ByteBuffer aggBuffer
+  )
+  {
+    rowContainer.set(row);
+
+    for (int i = 0; i < metrics.length; i++) {
+      final BufferAggregator agg = aggs[i];
+
+      synchronized (agg) {
+        try {
+          agg.aggregate(aggBuffer, aggBuffer.position() + aggOffsetInBuffer[i]);
+        }
+        catch (ParseException e) {
+          // "aggregate" can throw ParseExceptions if a selector expects something but gets something else.
+          if (reportParseExceptions) {
+            throw new ParseException(e, "Encountered parse error for aggregator[%s]", metrics[i].getName());
+          } else {
+            log.debug(e, "Encountered parse error, skipping aggregator[%s].", metrics[i].getName());
+          }
+        }
+      }
+    }
+    rowContainer.set(null);
   }
 }
