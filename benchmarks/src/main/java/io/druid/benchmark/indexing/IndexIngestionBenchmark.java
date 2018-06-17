@@ -29,7 +29,18 @@ import io.druid.query.aggregation.hyperloglog.HyperUniquesSerde;
 import io.druid.segment.incremental.IncrementalIndex;
 import io.druid.segment.incremental.IncrementalIndexSchema;
 import io.druid.segment.serde.ComplexMetrics;
-import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Warmup;
+import org.openjdk.jmh.annotations.Measurement;
+import org.openjdk.jmh.annotations.Param;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.Level;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Threads;
 import org.openjdk.jmh.infra.Blackhole;
 
 import java.io.IOException;
@@ -132,7 +143,7 @@ public class IndexIngestionBenchmark
   @Benchmark
   @BenchmarkMode(Mode.SingleShotTime)
   @OutputTimeUnit(TimeUnit.SECONDS)
-  @Threads(1)
+  @Threads(10)
   public void addRows(Blackhole blackhole) throws Exception
   {
     long time = System.currentTimeMillis();
@@ -144,7 +155,7 @@ public class IndexIngestionBenchmark
       blackhole.consume(rv);
     }
     long duration = System.currentTimeMillis() - time;
-    double throughput = (1 * rowsPerSegment) / (double) duration;
+    double throughput = (10 * rowsPerSegment) / (double) duration;
     log.info("Index size: " + incIndex.size() + ". Duration: " + duration + " millis . Version " + myVersion + ". Throughput: " + throughput + " ops/ms");
   }
 
