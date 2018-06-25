@@ -42,14 +42,14 @@ public class OnheapIncrementalIndexTest
   public void testMultithreadAddFacts() throws Exception
   {
     final IncrementalIndex index = new IncrementalIndex.Builder()
-        .setIndexSchema(
-            new IncrementalIndexSchema.Builder()
-                .withQueryGranularity(Granularities.MINUTE)
-                .withMetrics(new LongMaxAggregatorFactory("max", "max"))
-                .build()
-        )
-        .setMaxRowCount(MAX_ROWS)
-        .buildOnheap();
+            .setIndexSchema(
+                    new IncrementalIndexSchema.Builder()
+                            .withQueryGranularity(Granularities.MINUTE)
+                            .withMetrics(new LongMaxAggregatorFactory("max", "max"))
+                            .build()
+            )
+            .setMaxRowCount(MAX_ROWS)
+            .buildOnheap();
 
     final Random random = new Random();
     final int addThreadCount = 2;
@@ -63,9 +63,9 @@ public class OnheapIncrementalIndexTest
           try {
             for (int j = 0; j < MAX_ROWS / addThreadCount; ++j) {
               index.add(new MapBasedInputRow(
-                  0,
-                  Lists.newArrayList("billy"),
-                  ImmutableMap.<String, Object>of("billy", random.nextLong(), "max", 1)
+                      0,
+                      Lists.newArrayList("billy"),
+                      ImmutableMap.<String, Object>of("billy", random.nextLong(), "max", 1)
               ));
             }
           }
@@ -84,8 +84,10 @@ public class OnheapIncrementalIndexTest
       public void run()
       {
         while (!Thread.interrupted()) {
-          for (IncrementalIndexRow row : index.getFacts().keySet()) {
-            if (index.getMetricLongValue(row.getRowIndex(), 0) != 1) {
+          Iterable<IncrementalIndexRow> iterKeySet =
+                  index.keySet();
+          for (IncrementalIndexRow row : iterKeySet) {
+            if (index.getMetricLongValue(row, 0) != 1) {
               checkFailedCount.addAndGet(1);
             }
           }
@@ -111,14 +113,14 @@ public class OnheapIncrementalIndexTest
     EasyMock.expectLastCall().times(1);
 
     final OnheapIncrementalIndex index = (OnheapIncrementalIndex) new IncrementalIndex.Builder()
-        .setIndexSchema(
-            new IncrementalIndexSchema.Builder()
-                .withQueryGranularity(Granularities.MINUTE)
-                .withMetrics(new LongMaxAggregatorFactory("max", "max"))
-                .build()
-        )
-        .setMaxRowCount(MAX_ROWS)
-        .buildOnheap();
+            .setIndexSchema(
+                    new IncrementalIndexSchema.Builder()
+                            .withQueryGranularity(Granularities.MINUTE)
+                            .withMetrics(new LongMaxAggregatorFactory("max", "max"))
+                            .build()
+            )
+            .setMaxRowCount(MAX_ROWS)
+            .buildOnheap();
 
     index.add(new MapBasedInputRow(
             0,
@@ -127,7 +129,7 @@ public class OnheapIncrementalIndexTest
     ));
 
     // override the aggregators with the mocks
-    index.concurrentGet(0)[0] = mockedAggregator;
+    index.aggsManager.concurrentGet(0)[0] = mockedAggregator;
 
     // close the indexer and validate the expectations
     EasyMock.replay(mockedAggregator);
