@@ -178,13 +178,13 @@ public class OffheapOakIncrementalIndex extends
   @Override
   protected long getMinTimeMillis()
   {
-    return oak.getMinKeyTransformation(buff -> buff.getLong(buff.position() + TIME_STAMP_INDEX));
+    return oak.getMinKey(buff -> buff.getLong(buff.position() + TIME_STAMP_INDEX));
   }
 
   @Override
   protected long getMaxTimeMillis()
   {
-    return oak.getMaxKeyTransformation(buff -> buff.getLong(buff.position() + TIME_STAMP_INDEX));
+    return oak.getMaxKey(buff -> buff.getLong(buff.position() + TIME_STAMP_INDEX));
   }
 
   @Override

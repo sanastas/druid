@@ -102,7 +102,6 @@ public class IndexIngestionBenchmark
       rows.add(row);
     }
 
-    log.info("Building an " + (onheap ? "on-heap" : "Oak") + " incremental index...");
     version = new AtomicInteger(0);
   }
 
@@ -111,7 +110,6 @@ public class IndexIngestionBenchmark
   {
     incIndex = makeIncIndex();
     int prev = version.getAndIncrement();
-    log.info("The index was created. Previuos version: " + prev + ". New version: " + (prev + 1));
   }
 
   private IncrementalIndex makeIncIndex()
@@ -143,12 +141,11 @@ public class IndexIngestionBenchmark
   @Benchmark
   @BenchmarkMode(Mode.SingleShotTime)
   @OutputTimeUnit(TimeUnit.SECONDS)
-  @Threads(10)
+  @Threads(1)
   public void addRows(Blackhole blackhole) throws Exception
   {
     long time = System.currentTimeMillis();
     int myVersion = version.get();
-    log.info("Time before loop: " + time + ". Version " + myVersion);
     for (int i = 0; i < rowsPerSegment; i++) {
       InputRow row = rows.get(i);
       int rv = incIndex.add(row).getRowCount();
@@ -156,7 +153,7 @@ public class IndexIngestionBenchmark
     }
     long duration = System.currentTimeMillis() - time;
     double throughput = (10 * rowsPerSegment) / (double) duration;
-    log.info("Index size: " + incIndex.size() + ". Duration: " + duration + " millis . Version " + myVersion + ". Throughput: " + throughput + " ops/ms");
+    log.info("Throughput: " + throughput + " ops/ms");
   }
 
 }
