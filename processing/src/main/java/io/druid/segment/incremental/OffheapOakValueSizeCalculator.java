@@ -19,18 +19,20 @@
 
 package io.druid.segment.incremental;
 
+import oak.SizeCalculator;
 
-public abstract class InternalDataIncrementalIndex<AggregatorType> extends IncrementalIndex<AggregatorType>
+public class OffheapOakValueSizeCalculator implements SizeCalculator<IncrementalIndexRow>
 {
+  private int aggsTotalSize;
 
-  protected InternalDataIncrementalIndex(
-          IncrementalIndexSchema incrementalIndexSchema,
-          boolean deserializeComplexMetrics,
-          boolean reportParseExceptions,
-          boolean concurrentEventAdd
-  )
+  public OffheapOakValueSizeCalculator(int aggsTotalSize)
   {
-    super(incrementalIndexSchema, deserializeComplexMetrics, reportParseExceptions, concurrentEventAdd);
+    this.aggsTotalSize = aggsTotalSize;
   }
 
+  @Override
+  public int calculateSize(IncrementalIndexRow incrementalIndexRow)
+  {
+    return aggsTotalSize;
+  }
 }

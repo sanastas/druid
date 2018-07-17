@@ -102,10 +102,13 @@ public class IncrementalIndexRowCompTest
     origIncrementalIndexRow[4] = index.toIncrementalIndexRow(toMapRow(time + 1, "billy", "A", "joe", "A,B")).getIncrementalIndexRow();
     origIncrementalIndexRow[5] = index.toIncrementalIndexRow(toMapRow(time + 1)).getIncrementalIndexRow();
 
+    OffheapOakKeySerializer serializer = new OffheapOakKeySerializer(oakIndex.dimensionDescsList);
+    OffheapOakKeySizeCalculator sizeCalculator = new OffheapOakKeySizeCalculator(oakIndex.dimensionDescsList);
+
     for (int i = 0; i < 6; i++) {
-      serializedIncrementalIndexRow[i] = ByteBuffer.allocate(oakIndex.incrementalIndexRowAllocSize(origIncrementalIndexRow[i]));
-      oakIndex.incrementalIndexRowSerialization(origIncrementalIndexRow[i], serializedIncrementalIndexRow[i]);
-      deserializedIncrementalIndexRow[i] = oakIndex.incrementalIndexRowDeserialization(serializedIncrementalIndexRow[i]);
+      serializedIncrementalIndexRow[i] = ByteBuffer.allocate(sizeCalculator.calculateSize(origIncrementalIndexRow[i]));
+      serializer.serialize(origIncrementalIndexRow[i], serializedIncrementalIndexRow[i]);
+      deserializedIncrementalIndexRow[i] = serializer.deserialize(serializedIncrementalIndexRow[i]);
       Assert.assertEquals(0, comparator.compare(origIncrementalIndexRow[i], deserializedIncrementalIndexRow[i]));
     }
   }
@@ -113,7 +116,7 @@ public class IncrementalIndexRowCompTest
   @Test
   public void testIncrementalIndexRowByteBufferComparator() throws IndexSizeExceededException
   {
-    IncrementalIndex index = new OffheapOakIncrementalIndex.Builder()
+    IncrementalIndex index = new IncrementalIndex.Builder()
             .setSimpleTestingIndexSchema(new CountAggregatorFactory("cnt"))
             .setMaxRowCount(1000)
             .buildOffheapOak(2048, 100);
@@ -130,10 +133,13 @@ public class IncrementalIndexRowCompTest
     incrementalIndexRowArray[4] = index.toIncrementalIndexRow(toMapRow(time + 1, "billy", "A", "joe", "B,A")).getIncrementalIndexRow();
     incrementalIndexRowArray[5] = index.toIncrementalIndexRow(toMapRow(time + 1)).getIncrementalIndexRow();
 
+    OffheapOakKeySerializer serializer = new OffheapOakKeySerializer(oakIndex.dimensionDescsList);
+    OffheapOakKeySizeCalculator sizeCalculator = new OffheapOakKeySizeCalculator(oakIndex.dimensionDescsList);
+
     ByteBuffer[] incrementalIndexRowByteBufferArray = new ByteBuffer[6];
     for (int i = 0; i < 6; i++) {
-      incrementalIndexRowByteBufferArray[i] = ByteBuffer.allocate(oakIndex.incrementalIndexRowAllocSize(incrementalIndexRowArray[i]));
-      oakIndex.incrementalIndexRowSerialization(incrementalIndexRowArray[i], incrementalIndexRowByteBufferArray[i]);
+      incrementalIndexRowByteBufferArray[i] = ByteBuffer.allocate(sizeCalculator.calculateSize(incrementalIndexRowArray[i]));
+      serializer.serialize(incrementalIndexRowArray[i], incrementalIndexRowByteBufferArray[i]);
     }
 
     Comparator<Object> comparator = oakIndex.dimsByteBufferComparator();

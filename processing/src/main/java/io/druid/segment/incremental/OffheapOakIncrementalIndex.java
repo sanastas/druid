@@ -1,18 +1,18 @@
 /*
- * Licensed to Metamarkets Group Inc. (Metamarkets) under one
- * or more contributor license agreements. See the NOTICE file
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
- * regarding copyright ownership. Metamarkets licenses this file
+ * regarding copyright ownership.  The ASF licenses this file
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
- * with the License. You may obtain a copy of the License at
+ * with the License.  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *   http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
+ * KIND, either express or implied.  See the License for the
  * specific language governing permissions and limitations
  * under the License.
  */
@@ -20,7 +20,6 @@
 package io.druid.segment.incremental;
 
 import com.google.common.collect.Iterators;
-import com.google.common.collect.Maps;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
 import io.druid.data.input.InputRow;
@@ -32,10 +31,7 @@ import io.druid.java.util.common.parsers.ParseException;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.BufferAggregator;
 import io.druid.query.aggregation.PostAggregator;
-import io.druid.segment.column.ColumnCapabilitiesImpl;
-import io.druid.segment.column.ValueType;
 import io.druid.segment.ColumnValueSelector;
-import io.druid.segment.DimensionHandler;
 import io.druid.segment.DimensionIndexer;
 
 import java.nio.ByteBuffer;
@@ -43,8 +39,11 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.List;
 import java.util.Comparator;
-import java.util.function.Function;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import io.druid.segment.column.ColumnCapabilitiesImpl;
+import io.druid.segment.column.ValueType;
+import oak.OakMapBuilder;
 import oak.OakMapOffHeapImpl;
 import oak.OakMap;
 import oak.CloseableIterator;
@@ -54,8 +53,7 @@ import javax.annotation.Nullable;
 
 /**
  */
-public class OffheapOakIncrementalIndex extends
-        io.druid.segment.incremental.InternalDataIncrementalIndex<BufferAggregator>
+public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<BufferAggregator>
 {
 
   private static final Logger log = new Logger(OffheapOakIncrementalIndex.class);
@@ -68,14 +66,19 @@ public class OffheapOakIncrementalIndex extends
   static final Integer TIME_STAMP_INDEX = 0;
   static final Integer DIMS_LENGTH_INDEX = TIME_STAMP_INDEX + Long.BYTES;
   static final Integer DIMS_INDEX = DIMS_LENGTH_INDEX + Integer.BYTES;
+  // Serialization and deserialization offsets
+  static final Integer VALUE_TYPE_OFFSET = 0;
+  static final Integer DATA_OFFSET = VALUE_TYPE_OFFSET + Integer.BYTES;
+  static final Integer ARRAY_INDEX_OFFSET = VALUE_TYPE_OFFSET + Integer.BYTES;
+  static final Integer ARRAY_LENGTH_OFFSET = ARRAY_INDEX_OFFSET + Integer.BYTES;
 
-  OakMapOffHeapImpl oak;
+  OakMapOffHeapImpl<IncrementalIndexRow, InputRow> oak;
   private final int maxRowCount;
   private String outOfRowsReason = null;
   private OffheapAggsManager aggsManager;
 
   OffheapOakIncrementalIndex(
-          io.druid.segment.incremental.IncrementalIndexSchema incrementalIndexSchema,
+          IncrementalIndexSchema incrementalIndexSchema,
           boolean deserializeComplexMetrics,
           boolean reportParseExceptions,
           boolean concurrentEventAdd,
@@ -86,88 +89,60 @@ public class OffheapOakIncrementalIndex extends
   {
     super(incrementalIndexSchema, deserializeComplexMetrics, reportParseExceptions,
             concurrentEventAdd);
-
-    IncrementalIndexRow minIncrementalIndexRow = getMinIncrementalIndexRow();
-    oak = new OakMapOffHeapImpl(new IncrementalIndexRowByteBuffersComp(dimensionDescsList),
-            minIncrementalIndexRow,
-            new OffheapOakCreateKeyConsumer(dimensionDescsList),
-            new OffheapOakKeyCapacityCalculator(dimensionDescsList),
-            chunkMaxItems,
-            chunkBytesPerItem);
     this.maxRowCount = maxRowCount;
 
     this.aggsManager = new OffheapAggsManager(incrementalIndexSchema, deserializeComplexMetrics,
             reportParseExceptions, concurrentEventAdd, rowSupplier,
             columnCapabilities, null, this);
+
+    IncrementalIndexRow minIncrementalIndexRow = getMinIncrementalIndexRow();
+
+    OakMapBuilder builder = new OakMapBuilder()
+            .setChunkMaxItems(chunkMaxItems)
+            .setChunkBytesPerItem(chunkBytesPerItem)
+            .setKeySerializer(new OffheapOakKeySerializer(dimensionDescsList))
+            .setKeySizeCalculator(new OffheapOakKeySizeCalculator(dimensionDescsList))
+            .setValueSerializer(new OffheapOakValueSerializer(dimensionDescsList, aggsManager, reportParseExceptions, in))
+            .setValueSizeCalculator(new OffheapOakValueSizeCalculator(aggsManager.aggsTotalSize))
+            .setMinKey(minIncrementalIndexRow)
+            .setKeysComparator(new OffheapOakKeysComparator(dimensionDescsList))
+            .setSerializationsComparator(new OffheapOakSerializationsComparator(dimensionDescsList))
+            .setSerializationAndKeyComparator(new OffheapOakSerializationAndKeyComparator(dimensionDescsList));
+
+    oak = builder.buildOffHeapOakMap();
   }
 
   @Override
   public Iterable<Row> iterableWithPostAggregations(List<PostAggregator> postAggs, boolean descending)
   {
+    OakMap oakMap = descending ? oak.descendingMap() : oak;
+    CloseableIterator<Row> valuesIterator = oakMap.valuesIterator();
     return new Iterable<Row>()
     {
       @Override
       public Iterator<Row> iterator()
       {
-        OakMap oakMap = descending ? oak.descendingMap() : oak;
-        Function<Map.Entry<ByteBuffer, ByteBuffer>, Row> transformer = new EntryTransformer(postAggs);
-        return oakMap.entriesTransformIterator(transformer);
+        return Iterators.transform(
+            valuesIterator,
+            new com.google.common.base.Function<Row, Row>() {
+              @Nullable
+              @Override
+              public Row apply(@Nullable Row row)
+              {
+                Map<String, Object> event = ((MapBasedRow) row).getEvent();
+                long timestamp = ((MapBasedRow) row).getTimestamp().getMillis();
+                if (postAggs != null) {
+                  for (PostAggregator postAgg : postAggs) {
+                    event.put(postAgg.getName(), postAgg.compute(event));
+                  }
+                }
+                return new MapBasedRow(timestamp, event);
+              }
+            }
+        );
       }
     };
   }
-
-  // for oak's transform iterator
-  private class EntryTransformer implements Function<Map.Entry<ByteBuffer, ByteBuffer>, Row>
-  {
-    List<PostAggregator> postAggs;
-    final List<DimensionDesc> dimensions;
-
-    public EntryTransformer(List<PostAggregator> postAggs)
-    {
-      this.postAggs = postAggs;
-      this.dimensions = getDimensions();
-    }
-
-    @Nullable
-    @Override
-    public Row apply(@Nullable Map.Entry<ByteBuffer, ByteBuffer> entry)
-    {
-      IncrementalIndexRow key = incrementalIndexRowDeserialization(entry.getKey());
-      ByteBuffer value = entry.getValue();
-      Object[] dims = key.getDims();
-
-      Map<String, Object> theVals = Maps.newLinkedHashMap();
-      for (int i = 0; i < dims.length; ++i) {
-        Object dim = dims[i];
-        DimensionDesc dimensionDesc = dimensions.get(i);
-        if (dimensionDesc == null) {
-          continue;
-        }
-        String dimensionName = dimensionDesc.getName();
-        DimensionHandler handler = dimensionDesc.getHandler();
-        if (dim == null || handler.getLengthOfEncodedKeyComponent(dim) == 0) {
-          theVals.put(dimensionName, null);
-          continue;
-        }
-        final DimensionIndexer indexer = dimensionDesc.getIndexer();
-        Object rowVals = indexer.convertUnsortedEncodedKeyComponentToActualArrayOrList(dim, DimensionIndexer.LIST);
-        theVals.put(dimensionName, rowVals);
-      }
-
-      BufferAggregator[] aggs = getAggs();
-      for (int i = 0; i < aggs.length; ++i) {
-        theVals.put(aggsManager.metrics[i].getName(), aggs[i].get(value, aggsManager.aggOffsetInBuffer[i]));
-      }
-
-      if (postAggs != null) {
-        for (PostAggregator postAgg : postAggs) {
-          theVals.put(postAgg.getName(), postAgg.compute(theVals));
-        }
-      }
-
-      return new MapBasedRow(key.getTimestamp(), theVals);
-    }
-  };
 
   @Override
   public void close()
@@ -178,13 +153,13 @@ public class OffheapOakIncrementalIndex extends
   @Override
   protected long getMinTimeMillis()
   {
-    return oak.getMinKey(buff -> buff.getLong(buff.position() + TIME_STAMP_INDEX));
+    return oak.getMinKey().getTimestamp();
   }
 
   @Override
   protected long getMaxTimeMillis()
   {
-    return oak.getMaxKey(buff -> buff.getLong(buff.position() + TIME_STAMP_INDEX));
+    return oak.getMaxKey().getTimestamp();
   }
 
   @Override
@@ -261,14 +236,14 @@ public class OffheapOakIncrementalIndex extends
     if (descending == true) {
       subMap = subMap.descendingMap();
     }
-    CloseableIterator<ByteBuffer> keysIterator = subMap.keysIterator();
+    CloseableIterator<IncrementalIndexRow> keysIterator = subMap.keysIterator();
     return new Iterable<IncrementalIndexRow>() {
       @Override
       public Iterator<IncrementalIndexRow> iterator()
       {
         return Iterators.transform(
           keysIterator,
-          byteBuffer -> incrementalIndexRowDeserialization(byteBuffer)
+          key -> key
         );
       }
     };
@@ -277,7 +252,7 @@ public class OffheapOakIncrementalIndex extends
   @Override
   public Iterable<IncrementalIndexRow> keySet()
   {
-    CloseableIterator<ByteBuffer> keysIterator = oak.keysIterator();
+    CloseableIterator<IncrementalIndexRow> keysIterator = oak.keysIterator();
 
     return new Iterable<IncrementalIndexRow>() {
       @Override
@@ -285,7 +260,7 @@ public class OffheapOakIncrementalIndex extends
       {
         return Iterators.transform(
             keysIterator,
-            byteBuffer -> incrementalIndexRowDeserialization(byteBuffer)
+            key -> key
         );
       }
     };
@@ -315,16 +290,10 @@ public class OffheapOakIncrementalIndex extends
           boolean skipMaxRowsInMemoryCheck
   ) throws IndexSizeExceededException
   {
-    //log.info("addToOak. current number of entries = " + numEntries.get());
-    OffheapOakCreateKeyConsumer keyCreator = new OffheapOakCreateKeyConsumer(dimensionDescsList);
-    OffheapOakKeyCapacityCalculator keyCapacityCalculator = new OffheapOakKeyCapacityCalculator(dimensionDescsList);
-    OffheapOakCreateValueConsumer valueCreator = new OffheapOakCreateValueConsumer(aggsManager, reportParseExceptions,
-            row, rowContainer);
-    OffheapOakComputeConsumer func = new OffheapOakComputeConsumer(aggsManager, reportParseExceptions,
+    OffheapOakComputer computer = new OffheapOakComputer(aggsManager, reportParseExceptions,
             row, rowContainer);
     if (numEntries.get() < maxRowCount || skipMaxRowsInMemoryCheck) {
-      oak.putIfAbsentComputeIfPresent(incrementalIndexRow, keyCreator, keyCapacityCalculator, valueCreator,
-              aggsManager.aggsTotalSize, func);
+      oak.putIfAbsentComputeIfPresent(incrementalIndexRow, row, computer);
 
       int currSize = oak.entries();
       int prev = numEntries.get();
@@ -336,7 +305,7 @@ public class OffheapOakIncrementalIndex extends
       }
 
     } else {
-      if (!oak.computeIfPresent(incrementalIndexRow, func)) { // the key wasn't in oak
+      if (!oak.computeIfPresent(incrementalIndexRow, computer)) { // the key wasn't in oak
         throw new IndexSizeExceededException("Maximum number of rows [%d] reached", maxRowCount);
       }
     }
@@ -400,190 +369,6 @@ public class OffheapOakIncrementalIndex extends
     );
     updateMaxIngestedTime(row.getTimestamp());
     return new IncrementalIndexAddResult(rv, 0, null);
-  }
-
-  void incrementalIndexRowSerialization(IncrementalIndexRow incrementalIndexRow, ByteBuffer buff)
-  {
-    int allocSize = incrementalIndexRowAllocSize(incrementalIndexRow);
-    if (buff == null || buff.remaining() < allocSize) {
-      return;
-    }
-
-    buff.putLong(incrementalIndexRow.getTimestamp());
-    Object[] dims = incrementalIndexRow.getDims();
-    int dimsLength = (dims == null ? 0 : dims.length);
-    buff.putInt(dimsLength);
-
-    int currDimsIndex = DIMS_INDEX;
-    int currArrayIndex = DIMS_INDEX + ALLOC_PER_DIM * dimsLength;
-    for (int dimIndex = 0; dimIndex < dimsLength; dimIndex++) {
-      ValueType valueType = getDimValueType(dimIndex);
-      if (valueType == null || dims[dimIndex] == null) {
-        buff.putInt(currDimsIndex, NO_DIM);
-        currDimsIndex += ALLOC_PER_DIM;
-        continue;
-      }
-      switch (valueType) {
-        case LONG:
-          buff.putInt(currDimsIndex, valueType.ordinal());
-          currDimsIndex += Integer.BYTES;
-          buff.putLong(currDimsIndex, (Long) dims[dimIndex]);
-          currDimsIndex += Long.BYTES;
-          break;
-        case FLOAT:
-          buff.putInt(currDimsIndex, valueType.ordinal());
-          currDimsIndex += Integer.BYTES;
-          buff.putFloat(currDimsIndex, (Float) dims[dimIndex]);
-          currDimsIndex += Long.BYTES;
-          break;
-        case DOUBLE:
-          buff.putInt(currDimsIndex, valueType.ordinal());
-          currDimsIndex += Integer.BYTES;
-          buff.putDouble(currDimsIndex, (Double) dims[dimIndex]);
-          currDimsIndex += Long.BYTES;
-          break;
-        case STRING:
-          buff.putInt(currDimsIndex, valueType.ordinal()); // writing the value type
-          currDimsIndex += Integer.BYTES;
-          buff.putInt(currDimsIndex, currArrayIndex); // writing the array position
-          currDimsIndex += Integer.BYTES;
-          if (dims[dimIndex] == null) {
-            buff.putInt(currDimsIndex, 0);
-            currDimsIndex += Integer.BYTES;
-            break;
-          }
-          int[] array = (int[]) dims[dimIndex];
-          buff.putInt(currDimsIndex, array.length); // writing the array length
-          currDimsIndex += Integer.BYTES;
-          for (int j = 0; j < array.length; j++) {
-            buff.putInt(currArrayIndex, array[j]);
-            currArrayIndex += Integer.BYTES;
-          }
-          break;
-        default:
-          buff.putInt(currDimsIndex, NO_DIM);
-          currDimsIndex += ALLOC_PER_DIM;
-      }
-    }
-    buff.position(0);
-  }
-
-  public int incrementalIndexRowAllocSize(IncrementalIndexRow incrementalIndexRow)
-  {
-    if (incrementalIndexRow == null) {
-      return 0;
-    }
-
-    Object[] dims = incrementalIndexRow.getDims();
-    if (dims == null) {
-      return Long.BYTES + Integer.BYTES;
-    }
-
-    // When the dimensionDesc's capabilities are of type ValueType.STRING,
-    // the object in timeAndDims.dims is of type int[].
-    // In this case, we need to know the array size before allocating the ByteBuffer.
-    int sumOfArrayLengths = 0;
-    for (int i = 0; i < dims.length; i++) {
-      Object dim = dims[i];
-      if (dim == null) {
-        continue;
-      }
-      if (getDimValueType(i) == ValueType.STRING) {
-        sumOfArrayLengths += ((int[]) dim).length;
-      }
-    }
-
-    // The ByteBuffer will contain:
-    // 1. the timeStamp
-    // 2. dims.length
-    // 3. the serialization of each dim
-    // 4. the array (for dims with capabilities of a String ValueType)
-    return Long.BYTES + Integer.BYTES + ALLOC_PER_DIM * dims.length + Integer.BYTES * sumOfArrayLengths;
-  }
-
-  IncrementalIndexRow incrementalIndexRowDeserialization(ByteBuffer buff)
-  {
-    long timeStamp = getTimestamp(buff);
-    int dimsLength = getDimsLength(buff);
-    Object[] dims = new Object[dimsLength];
-    for (int dimIndex = 0; dimIndex < dimsLength; dimIndex++) {
-      Object dim = getDimValue(buff, dimIndex);
-      dims[dimIndex] = dim;
-    }
-    return new IncrementalIndexRow(timeStamp, dims, dimensionDescsList, IncrementalIndexRow.EMPTY_ROW_INDEX);
-  }
-
-  private ValueType getDimValueType(int dimIndex)
-  {
-    DimensionDesc dimensionDesc = getDimensions().get(dimIndex);
-    if (dimensionDesc == null) {
-      return null;
-    }
-    ColumnCapabilitiesImpl capabilities = dimensionDesc.getCapabilities();
-    if (capabilities == null) {
-      return null;
-    }
-    return capabilities.getType();
-  }
-
-  static long getTimestamp(ByteBuffer buff)
-  {
-    return buff.getLong(buff.position() + TIME_STAMP_INDEX);
-  }
-
-  static int getDimsLength(ByteBuffer buff)
-  {
-    return buff.getInt(buff.position() + DIMS_LENGTH_INDEX);
-  }
-
-  static Object getDimValue(ByteBuffer buff, int dimIndex)
-  {
-    Object dimObject = null;
-    int dimsLength = getDimsLength(buff);
-    if (dimIndex >= dimsLength) {
-      return null;
-    }
-    int dimType = buff.getInt(getDimIndexInBuffer(buff, dimIndex));
-    if (dimType == NO_DIM) {
-      return null;
-    } else if (dimType == ValueType.DOUBLE.ordinal()) {
-      dimObject = buff.getDouble(getDimIndexInBuffer(buff, dimIndex) + Integer.BYTES);
-    } else if (dimType == ValueType.FLOAT.ordinal()) {
-      dimObject = buff.getFloat(getDimIndexInBuffer(buff, dimIndex) + Integer.BYTES);
-    } else if (dimType == ValueType.LONG.ordinal()) {
-      dimObject = buff.getLong(getDimIndexInBuffer(buff, dimIndex) + Integer.BYTES);
-    } else if (dimType == ValueType.STRING.ordinal()) {
-      int arrayIndex = buff.position() + buff.getInt(getDimIndexInBuffer(buff, dimIndex) + Integer.BYTES);
-      int arraySize = buff.getInt(getDimIndexInBuffer(buff, dimIndex) + 2 * Integer.BYTES);
-      int[] array = new int[arraySize];
-      for (int i = 0; i < arraySize; i++) {
-        array[i] = buff.getInt(arrayIndex);
-        arrayIndex += Integer.BYTES;
-      }
-      dimObject = array;
-    }
-
-    return dimObject;
-  }
-
-  static boolean checkDimsAllNull(ByteBuffer buff, int numComparisons)
-  {
-    int dimsLength = getDimsLength(buff);
-    for (int index = 0; index < Math.min(dimsLength, numComparisons); index++) {
-      if (buff.getInt(getDimIndexInBuffer(buff, index)) != NO_DIM) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  static int getDimIndexInBuffer(ByteBuffer buff, int dimIndex)
-  {
-    int dimsLength = getDimsLength(buff);
-    if (dimIndex >= dimsLength) {
-      return NO_DIM;
-    }
-    return buff.position() + DIMS_INDEX + dimIndex * ALLOC_PER_DIM;
   }
 
   private IncrementalIndexRow getMinIncrementalIndexRow()
@@ -772,6 +557,83 @@ public class OffheapOakIncrementalIndex extends
   public List<String> getMetricNames()
   {
     return aggsManager.getMetricNames();
+  }
+
+  // Serialization utils
+  static long getTimestamp(ByteBuffer buff)
+  {
+    return buff.getLong(buff.position() + OffheapOakIncrementalIndex.TIME_STAMP_INDEX);
+  }
+
+  static int getDimsLength(ByteBuffer buff)
+  {
+    return buff.getInt(buff.position() + OffheapOakIncrementalIndex.DIMS_LENGTH_INDEX);
+  }
+
+  static int getDimIndexInBuffer(ByteBuffer buff, int dimIndex)
+  {
+    int dimsLength = getDimsLength(buff);
+    if (dimIndex >= dimsLength) {
+      return OffheapOakIncrementalIndex.NO_DIM;
+    }
+    return buff.position() + OffheapOakIncrementalIndex.DIMS_INDEX +
+            dimIndex * OffheapOakIncrementalIndex.ALLOC_PER_DIM;
+  }
+
+  static Object getDimValue(ByteBuffer buff, int dimIndex)
+  {
+    Object dimObject = null;
+    int dimsLength = getDimsLength(buff);
+    if (dimIndex >= dimsLength) {
+      return null;
+    }
+    int dimIndexInBuffer = getDimIndexInBuffer(buff, dimIndex);
+    int dimType = buff.getInt(getDimIndexInBuffer(buff, dimIndex));
+    if (dimType == OffheapOakIncrementalIndex.NO_DIM) {
+      return null;
+    } else if (dimType == ValueType.DOUBLE.ordinal()) {
+      dimObject = buff.getDouble(dimIndexInBuffer + OffheapOakIncrementalIndex.DATA_OFFSET);
+    } else if (dimType == ValueType.FLOAT.ordinal()) {
+      dimObject = buff.getFloat(dimIndexInBuffer + OffheapOakIncrementalIndex.DATA_OFFSET);
+    } else if (dimType == ValueType.LONG.ordinal()) {
+      dimObject = buff.getLong(dimIndexInBuffer + OffheapOakIncrementalIndex.DATA_OFFSET);
+    } else if (dimType == ValueType.STRING.ordinal()) {
+      int arrayIndexOffset = buff.getInt(dimIndexInBuffer + OffheapOakIncrementalIndex.ARRAY_INDEX_OFFSET);
+      int arrayIndex = buff.position() + arrayIndexOffset;
+      int arraySize = buff.getInt(dimIndexInBuffer + OffheapOakIncrementalIndex.ARRAY_LENGTH_OFFSET);
+      int[] array = new int[arraySize];
+      for (int i = 0; i < arraySize; i++) {
+        array[i] = buff.getInt(arrayIndex);
+        arrayIndex += Integer.BYTES;
+      }
+      dimObject = array;
+    }
+
+    return dimObject;
+  }
+
+  static boolean checkDimsAllNull(ByteBuffer buff, int numComparisons)
+  {
+    int dimsLength = getDimsLength(buff);
+    for (int index = 0; index < Math.min(dimsLength, numComparisons); index++) {
+      if (buff.getInt(getDimIndexInBuffer(buff, index)) != OffheapOakIncrementalIndex.NO_DIM) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static ValueType getDimValueType(int dimIndex, List<DimensionDesc> dimensionDescsList)
+  {
+    DimensionDesc dimensionDesc = dimensionDescsList.get(dimIndex);
+    if (dimensionDesc == null) {
+      return null;
+    }
+    ColumnCapabilitiesImpl capabilities = dimensionDesc.getCapabilities();
+    if (capabilities == null) {
+      return null;
+    }
+    return capabilities.getType();
   }
 
 }

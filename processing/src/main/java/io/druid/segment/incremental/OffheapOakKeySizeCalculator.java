@@ -1,18 +1,18 @@
 /*
- * Licensed to Metamarkets Group Inc. (Metamarkets) under one
- * or more contributor license agreements. See the NOTICE file
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
- * regarding copyright ownership. Metamarkets licenses this file
+ * regarding copyright ownership.  The ASF licenses this file
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
- * with the License. You may obtain a copy of the License at
+ * with the License.  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *   http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
+ * KIND, either express or implied.  See the License for the
  * specific language governing permissions and limitations
  * under the License.
  */
@@ -20,32 +20,23 @@
 package io.druid.segment.incremental;
 
 import java.util.List;
-import java.util.function.Function;
-
-import io.druid.java.util.common.logger.Logger;
-import io.druid.segment.column.ColumnCapabilitiesImpl;
 import io.druid.segment.column.ValueType;
 import io.druid.segment.incremental.IncrementalIndex.DimensionDesc;
 
-public class OffheapOakKeyCapacityCalculator implements Function<Object, Integer>
+import oak.SizeCalculator;
+
+public class OffheapOakKeySizeCalculator implements SizeCalculator<IncrementalIndexRow>
 {
-  private static final Logger log = new Logger(OffheapOakKeyCapacityCalculator.class);
   private List<DimensionDesc> dimensionDescsList;
 
-  public OffheapOakKeyCapacityCalculator(List<DimensionDesc> dimensionDescsList)
+  public OffheapOakKeySizeCalculator(List<DimensionDesc> dimensionDescsList)
   {
     this.dimensionDescsList = dimensionDescsList;
   }
 
   @Override
-  public Integer apply(Object object)
+  public int calculateSize(IncrementalIndexRow incrementalIndexRow)
   {
-    if (object == null || !(object instanceof IncrementalIndexRow)) {
-      return 0;
-    }
-
-    IncrementalIndexRow incrementalIndexRow = (IncrementalIndexRow) object;
-
     Object[] dims = incrementalIndexRow.getDims();
     if (dims == null) {
       return Long.BYTES + Integer.BYTES;
@@ -60,7 +51,7 @@ public class OffheapOakKeyCapacityCalculator implements Function<Object, Integer
       if (dim == null) {
         continue;
       }
-      if (getDimValueType(i) == ValueType.STRING) {
+      if (OffheapOakIncrementalIndex.getDimValueType(i, dimensionDescsList) == ValueType.STRING) {
         sumOfArrayLengths += ((int[]) dim).length;
       }
     }
@@ -71,21 +62,7 @@ public class OffheapOakKeyCapacityCalculator implements Function<Object, Integer
     // 3. the serialization of each dim
     // 4. the array (for dims with capabilities of a String ValueType)
     int dimCapacity = OffheapOakIncrementalIndex.ALLOC_PER_DIM;
-    //log.info("OffheapOakKeyCapacityCalculator: " + (Long.BYTES + Integer.BYTES + dimCapacity * dims.length + Integer.BYTES * sumOfArrayLengths));
+    //log.info("OffheapOakKeySizeCalculator: " + (Long.BYTES + Integer.BYTES + dimCapacity * dims.length + Integer.BYTES * sumOfArrayLengths));
     return Long.BYTES + Integer.BYTES + dimCapacity * dims.length + Integer.BYTES * sumOfArrayLengths;
-
-  }
-
-  private ValueType getDimValueType(int dimIndex)
-  {
-    DimensionDesc dimensionDesc = dimensionDescsList.get(dimIndex);
-    if (dimensionDesc == null) {
-      return null;
-    }
-    ColumnCapabilitiesImpl capabilities = dimensionDesc.getCapabilities();
-    if (capabilities == null) {
-      return null;
-    }
-    return capabilities.getType();
   }
 }
