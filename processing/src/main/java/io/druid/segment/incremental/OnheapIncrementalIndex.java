@@ -49,14 +49,11 @@ public class OnheapIncrementalIndex extends ExternalDataIncrementalIndex<Aggrega
    * overhead per {@link ConcurrentHashMap.Node}  or {@link java.util.concurrent.ConcurrentSkipListMap.Node} object
    */
   private static final int ROUGH_OVERHEAD_PER_MAP_ENTRY = Long.BYTES * 5 + Integer.BYTES;
-  protected final FactsHolder facts;
+
   protected final AtomicInteger indexIncrement = new AtomicInteger(0);
   private final long maxBytesPerRowForAggregators;
-  protected final int maxRowCount;
   protected final long maxBytesInMemory;
   protected OnheapAggsManager aggsManager;
-
-  private String outOfRowsReason = null;
 
   OnheapIncrementalIndex(
           IncrementalIndexSchema incrementalIndexSchema,
@@ -68,13 +65,10 @@ public class OnheapIncrementalIndex extends ExternalDataIncrementalIndex<Aggrega
           long maxBytesInMemory
   )
   {
-    super(incrementalIndexSchema, deserializeComplexMetrics, reportParseExceptions, concurrentEventAdd);
+    super(incrementalIndexSchema, reportParseExceptions, sortFacts, maxRowCount);
     this.aggsManager = new OnheapAggsManager(incrementalIndexSchema, deserializeComplexMetrics,
             reportParseExceptions, concurrentEventAdd, rowSupplier, columnCapabilities, this);
-    this.maxRowCount = maxRowCount;
     this.maxBytesInMemory = maxBytesInMemory == 0 ? Long.MAX_VALUE : maxBytesInMemory;
-    this.facts = incrementalIndexSchema.isRollup() ? new RollupFactsHolder(sortFacts, dimsComparator(), getDimensions())
-            : new PlainFactsHolder(sortFacts);
     maxBytesPerRowForAggregators = getMaxBytesPerRowForAggregators(incrementalIndexSchema);
   }
 

@@ -73,8 +73,7 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
   static final Integer ARRAY_LENGTH_OFFSET = ARRAY_INDEX_OFFSET + Integer.BYTES;
 
   OakMapOffHeapImpl<IncrementalIndexRow, InputRow> oak;
-  private final int maxRowCount;
-  private String outOfRowsReason = null;
+
   private OffheapAggsManager aggsManager;
 
   OffheapOakIncrementalIndex(
@@ -87,9 +86,7 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
           int chunkBytesPerItem
   )
   {
-    super(incrementalIndexSchema, deserializeComplexMetrics, reportParseExceptions,
-            concurrentEventAdd);
-    this.maxRowCount = maxRowCount;
+    super(incrementalIndexSchema, reportParseExceptions, maxRowCount);
 
     this.aggsManager = new OffheapAggsManager(incrementalIndexSchema, deserializeComplexMetrics,
             reportParseExceptions, concurrentEventAdd, rowSupplier,

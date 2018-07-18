@@ -52,15 +52,9 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
   private final List<ResourceHolder<ByteBuffer>> aggBuffers = new ArrayList<>();
   private final List<int[]> indexAndOffsets = new ArrayList<>();
 
-  private final FactsHolder facts;
-
   private final AtomicInteger indexIncrement = new AtomicInteger(0);
 
-  protected final int maxRowCount;
-
   protected OffheapAggsManager aggsManager;
-
-  private String outOfRowsReason = null;
 
   OffheapIncrementalIndex(
           IncrementalIndexSchema incrementalIndexSchema,
@@ -72,12 +66,8 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
           NonBlockingPool<ByteBuffer> bufferPool
   )
   {
-    super(incrementalIndexSchema, deserializeComplexMetrics, reportParseExceptions, concurrentEventAdd);
-    this.maxRowCount = maxRowCount;
+    super(incrementalIndexSchema, reportParseExceptions, sortFacts, maxRowCount);
     this.bufferPool = bufferPool;
-
-    this.facts = incrementalIndexSchema.isRollup() ? new RollupFactsHolder(sortFacts, dimsComparator(), getDimensions())
-            : new PlainFactsHolder(sortFacts);
 
     this.aggsManager = new OffheapAggsManager(incrementalIndexSchema, deserializeComplexMetrics,
             reportParseExceptions, concurrentEventAdd, rowSupplier,

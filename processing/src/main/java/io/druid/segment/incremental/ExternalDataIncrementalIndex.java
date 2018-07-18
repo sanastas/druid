@@ -48,16 +48,19 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public abstract class ExternalDataIncrementalIndex<AggregatorType> extends IncrementalIndex<AggregatorType>
 {
+  protected FactsHolder facts;
 
   /* basic constractor */
   ExternalDataIncrementalIndex(
           IncrementalIndexSchema incrementalIndexSchema,
-          boolean deserializeComplexMetrics,
           boolean reportParseExceptions,
-          boolean concurrentEventAdd
+          boolean sortFacts,
+          int maxRowCount
   )
   {
-    super(incrementalIndexSchema, deserializeComplexMetrics, reportParseExceptions, concurrentEventAdd);
+    super(incrementalIndexSchema, reportParseExceptions, maxRowCount);
+    this.facts = incrementalIndexSchema.isRollup() ? new RollupFactsHolder(sortFacts, dimsComparator(), getDimensions())
+            : new PlainFactsHolder(sortFacts);
   }
 
   protected abstract FactsHolder getFacts();

@@ -25,12 +25,11 @@ public abstract class InternalDataIncrementalIndex<AggregatorType> extends Incre
 
   protected InternalDataIncrementalIndex(
           IncrementalIndexSchema incrementalIndexSchema,
-          boolean deserializeComplexMetrics,
           boolean reportParseExceptions,
-          boolean concurrentEventAdd
+          int maxRowCount
   )
   {
-    super(incrementalIndexSchema, deserializeComplexMetrics, reportParseExceptions, concurrentEventAdd);
+    super(incrementalIndexSchema, reportParseExceptions, maxRowCount);
   }
 
 }
