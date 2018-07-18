@@ -20,13 +20,9 @@
 package io.druid.segment.incremental;
 
 import com.google.common.base.Supplier;
-import com.google.common.base.Throwables;
-import com.google.common.collect.Maps;
 import io.druid.data.input.InputRow;
 import io.druid.java.util.common.StringUtils;
-import io.druid.java.util.common.io.Closer;
 import io.druid.java.util.common.logger.Logger;
-import io.druid.java.util.common.parsers.ParseException;
 import io.druid.query.aggregation.Aggregator;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.dimension.DimensionSpec;
@@ -36,8 +32,6 @@ import io.druid.segment.DimensionSelector;
 import io.druid.segment.column.ColumnCapabilities;
 
 import javax.annotation.Nullable;
-import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -48,38 +42,39 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  */
-public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
+public class OnheapIncrementalIndex extends ExternalDataIncrementalIndex<Aggregator>
 {
   private static final Logger log = new Logger(OnheapIncrementalIndex.class);
   /**
    * overhead per {@link ConcurrentHashMap.Node}  or {@link java.util.concurrent.ConcurrentSkipListMap.Node} object
    */
   private static final int ROUGH_OVERHEAD_PER_MAP_ENTRY = Long.BYTES * 5 + Integer.BYTES;
-  private final ConcurrentHashMap<Integer, Aggregator[]> aggregators = new ConcurrentHashMap<>();
-  private final FactsHolder facts;
-  private final AtomicInteger indexIncrement = new AtomicInteger(0);
+  protected final FactsHolder facts;
+  protected final AtomicInteger indexIncrement = new AtomicInteger(0);
   private final long maxBytesPerRowForAggregators;
   protected final int maxRowCount;
   protected final long maxBytesInMemory;
-  private volatile Map<String, ColumnSelectorFactory> selectors;
+  protected OnheapAggsManager aggsManager;
 
   private String outOfRowsReason = null;
 
   OnheapIncrementalIndex(
-      IncrementalIndexSchema incrementalIndexSchema,
-      boolean deserializeComplexMetrics,
-      boolean reportParseExceptions,
-      boolean concurrentEventAdd,
-      boolean sortFacts,
-      int maxRowCount,
-      long maxBytesInMemory
+          IncrementalIndexSchema incrementalIndexSchema,
+          boolean deserializeComplexMetrics,
+          boolean reportParseExceptions,
+          boolean concurrentEventAdd,
+          boolean sortFacts,
+          int maxRowCount,
+          long maxBytesInMemory
   )
   {
     super(incrementalIndexSchema, deserializeComplexMetrics, reportParseExceptions, concurrentEventAdd);
+    this.aggsManager = new OnheapAggsManager(incrementalIndexSchema, deserializeComplexMetrics,
+            reportParseExceptions, concurrentEventAdd, rowSupplier, columnCapabilities, this);
     this.maxRowCount = maxRowCount;
     this.maxBytesInMemory = maxBytesInMemory == 0 ? Long.MAX_VALUE : maxBytesInMemory;
     this.facts = incrementalIndexSchema.isRollup() ? new RollupFactsHolder(sortFacts, dimsComparator(), getDimensions())
-                                                   : new PlainFactsHolder(sortFacts);
+            : new PlainFactsHolder(sortFacts);
     maxBytesPerRowForAggregators = getMaxBytesPerRowForAggregators(incrementalIndexSchema);
   }
 
@@ -106,51 +101,39 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
   {
     long maxAggregatorIntermediateSize = Integer.BYTES * incrementalIndexSchema.getMetrics().length;
     maxAggregatorIntermediateSize += Arrays.stream(incrementalIndexSchema.getMetrics())
-                                           .mapToLong(aggregator -> aggregator.getMaxIntermediateSize() + Long.BYTES * 2)
-                                           .sum();
+            .mapToLong(aggregator -> aggregator.getMaxIntermediateSize() + Long.BYTES * 2)
+            .sum();
     return maxAggregatorIntermediateSize;
   }
 
   @Override
-  public FactsHolder getFacts()
+  protected FactsHolder getFacts()
   {
     return facts;
   }
 
   @Override
-  protected Aggregator[] initAggs(
-      final AggregatorFactory[] metrics,
-      final Supplier<InputRow> rowSupplier,
-      final boolean deserializeComplexMetrics,
-      final boolean concurrentEventAdd
-  )
+  public Aggregator[] getAggs()
   {
-    selectors = Maps.newHashMap();
-    for (AggregatorFactory agg : metrics) {
-      selectors.put(
-          agg.getName(),
-          new ObjectCachingColumnSelectorFactory(
-              makeColumnSelectorFactory(agg, rowSupplier, deserializeComplexMetrics),
-              concurrentEventAdd
-          )
-      );
-    }
+    return aggsManager.getAggs();
+  }
 
-    return new Aggregator[metrics.length];
+  @Override
+  public AggregatorFactory[] getMetricAggs()
+  {
+    return aggsManager.getMetricAggs();
   }
 
   @Override
   protected AddToFactsResult addToFacts(
-      AggregatorFactory[] metrics,
-      boolean deserializeComplexMetrics,
-      boolean reportParseExceptions,
-      InputRow row,
-      AtomicInteger numEntries,
-      AtomicLong sizeInBytes,
-      IncrementalIndexRow key,
-      ThreadLocal<InputRow> rowContainer,
-      Supplier<InputRow> rowSupplier,
-      boolean skipMaxRowsInMemoryCheck
+          boolean reportParseExceptions,
+          InputRow row,
+          AtomicInteger numEntries,
+          AtomicLong sizeInBytes,
+          IncrementalIndexRow key,
+          ThreadLocal<InputRow> rowContainer,
+          Supplier<InputRow> rowSupplier,
+          boolean skipMaxRowsInMemoryCheck
   ) throws IndexSizeExceededException
   {
     List<String> parseExceptionMessages;
@@ -159,24 +142,24 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
     Aggregator[] aggs;
 
     if (IncrementalIndexRow.EMPTY_ROW_INDEX != priorIndex) {
-      aggs = concurrentGet(priorIndex);
-      parseExceptionMessages = doAggregate(metrics, aggs, rowContainer, row);
+      aggs = aggsManager.concurrentGet(priorIndex);
+      parseExceptionMessages = aggsManager.doAggregate(aggsManager.metrics, aggs, rowContainer, row);
     } else {
-      aggs = new Aggregator[metrics.length];
-      factorizeAggs(metrics, aggs, rowContainer, row);
-      parseExceptionMessages = doAggregate(metrics, aggs, rowContainer, row);
+      aggs = new Aggregator[aggsManager.metrics.length];
+      aggsManager.factorizeAggs(aggsManager.metrics, aggs, rowContainer, row);
+      parseExceptionMessages = aggsManager.doAggregate(aggsManager.metrics, aggs, rowContainer, row);
 
       final int rowIndex = indexIncrement.getAndIncrement();
-      concurrentSet(rowIndex, aggs);
+      aggsManager.concurrentSet(rowIndex, aggs);
 
       // Last ditch sanity checks
       if ((numEntries.get() >= maxRowCount || sizeInBytes.get() >= maxBytesInMemory)
-          && facts.getPriorIndex(key) == IncrementalIndexRow.EMPTY_ROW_INDEX
-          && !skipMaxRowsInMemoryCheck) {
+              && facts.getPriorIndex(key) == IncrementalIndexRow.EMPTY_ROW_INDEX
+              && !skipMaxRowsInMemoryCheck) {
         throw new IndexSizeExceededException(
-            "Maximum number of rows [%d] or max size in bytes [%d] reached",
-            maxRowCount,
-            maxBytesInMemory
+                "Maximum number of rows [%d] or max size in bytes [%d] reached",
+                maxRowCount,
+                maxBytesInMemory
         );
       }
       final int prev = facts.putIfAbsent(key, rowIndex);
@@ -186,10 +169,10 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
         sizeInBytes.addAndGet(estimatedRowSize);
       } else {
         // We lost a race
-        aggs = concurrentGet(prev);
-        parseExceptionMessages = doAggregate(metrics, aggs, rowContainer, row);
+        aggs = aggsManager.concurrentGet(prev);
+        parseExceptionMessages = aggsManager.doAggregate(aggsManager.metrics, aggs, rowContainer, row);
         // Free up the misfire
-        concurrentRemove(rowIndex);
+        aggsManager.concurrentRemove(rowIndex);
         // This is expected to occur ~80% of the time in the worst scenarios
       }
     }
@@ -221,103 +204,13 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
     return indexIncrement.get() - 1;
   }
 
-  private void factorizeAggs(
-      AggregatorFactory[] metrics,
-      Aggregator[] aggs,
-      ThreadLocal<InputRow> rowContainer,
-      InputRow row
-  )
-  {
-    rowContainer.set(row);
-    for (int i = 0; i < metrics.length; i++) {
-      final AggregatorFactory agg = metrics[i];
-      aggs[i] = agg.factorize(selectors.get(agg.getName()));
-    }
-    rowContainer.set(null);
-  }
-
-  private List<String> doAggregate(
-      AggregatorFactory[] metrics,
-      Aggregator[] aggs,
-      ThreadLocal<InputRow> rowContainer,
-      InputRow row
-  )
-  {
-    List<String> parseExceptionMessages = new ArrayList<>();
-    rowContainer.set(row);
-
-    for (int i = 0; i < aggs.length; i++) {
-      final Aggregator agg = aggs[i];
-      synchronized (agg) {
-        try {
-          agg.aggregate();
-        }
-        catch (ParseException e) {
-          // "aggregate" can throw ParseExceptions if a selector expects something but gets something else.
-          log.debug(e, "Encountered parse error, skipping aggregator[%s].", metrics[i].getName());
-          parseExceptionMessages.add(e.getMessage());
-        }
-      }
-    }
-
-    rowContainer.set(null);
-    return parseExceptionMessages;
-  }
-
-  private void closeAggregators()
-  {
-    Closer closer = Closer.create();
-    for (Aggregator[] aggs : aggregators.values()) {
-      for (Aggregator agg : aggs) {
-        closer.register(agg);
-      }
-    }
-
-    try {
-      closer.close();
-    }
-    catch (IOException e) {
-      Throwables.propagate(e);
-    }
-  }
-
-  protected Aggregator[] concurrentGet(int offset)
-  {
-    // All get operations should be fine
-    return aggregators.get(offset);
-  }
-
-  protected void concurrentSet(int offset, Aggregator[] value)
-  {
-    aggregators.put(offset, value);
-  }
-
-  protected void concurrentRemove(int offset)
-  {
-    aggregators.remove(offset);
-  }
-
   @Override
   public boolean canAppendRow()
   {
-    final boolean countCheck = size() < maxRowCount;
-    // if maxBytesInMemory = -1, then ignore sizeCheck
-    final boolean sizeCheck = maxBytesInMemory <= 0 || getBytesInMemory() < maxBytesInMemory;
-    final boolean canAdd = countCheck && sizeCheck;
-    if (!countCheck && !sizeCheck) {
-      outOfRowsReason = StringUtils.format(
-          "Maximum number of rows [%d] and maximum size in bytes [%d] reached",
-          maxRowCount,
-          maxBytesInMemory
-      );
-    } else {
-      if (!countCheck) {
-        outOfRowsReason = StringUtils.format("Maximum number of rows [%d] reached", maxRowCount);
-      } else if (!sizeCheck) {
-        outOfRowsReason = StringUtils.format("Maximum size in bytes [%d] reached", maxBytesInMemory);
-      }
+    final boolean canAdd = size() < maxRowCount;
+    if (!canAdd) {
+      outOfRowsReason = StringUtils.format("Maximum number of rows [%d] reached", maxRowCount);
     }
-
     return canAdd;
   }
 
@@ -328,45 +221,52 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
   }
 
   @Override
-  protected Aggregator[] getAggsForRow(int rowOffset)
+  protected Aggregator[] getAggsForRow(IncrementalIndexRow incrementalIndexRow)
   {
-    return concurrentGet(rowOffset);
+    int rowIndex = incrementalIndexRow.getRowIndex();
+    return aggsManager.concurrentGet(rowIndex);
   }
 
   @Override
-  protected Object getAggVal(Aggregator agg, int rowOffset, int aggPosition)
+  protected Object getAggVal(IncrementalIndexRow incrementalIndexRow, int aggIndex)
   {
-    return agg.get();
+    int rowIndex = incrementalIndexRow.getRowIndex();
+    return aggsManager.concurrentGet(rowIndex)[aggIndex].get();
   }
 
   @Override
-  public float getMetricFloatValue(int rowOffset, int aggOffset)
+  public float getMetricFloatValue(IncrementalIndexRow incrementalIndexRow, int aggIndex)
   {
-    return concurrentGet(rowOffset)[aggOffset].getFloat();
+    int rowIndex = incrementalIndexRow.getRowIndex();
+    return aggsManager.concurrentGet(rowIndex)[aggIndex].getFloat();
   }
 
   @Override
-  public long getMetricLongValue(int rowOffset, int aggOffset)
+  public long getMetricLongValue(IncrementalIndexRow incrementalIndexRow, int aggIndex)
   {
-    return concurrentGet(rowOffset)[aggOffset].getLong();
+    int rowIndex = incrementalIndexRow.getRowIndex();
+    return aggsManager.concurrentGet(rowIndex)[aggIndex].getLong();
   }
 
   @Override
-  public Object getMetricObjectValue(int rowOffset, int aggOffset)
+  public Object getMetricObjectValue(IncrementalIndexRow incrementalIndexRow, int aggIndex)
   {
-    return concurrentGet(rowOffset)[aggOffset].get();
+    int rowIndex = incrementalIndexRow.getRowIndex();
+    return aggsManager.concurrentGet(rowIndex)[aggIndex].get();
   }
 
   @Override
-  protected double getMetricDoubleValue(int rowOffset, int aggOffset)
+  public double getMetricDoubleValue(IncrementalIndexRow incrementalIndexRow, int aggIndex)
   {
-    return concurrentGet(rowOffset)[aggOffset].getDouble();
+    int rowIndex = incrementalIndexRow.getRowIndex();
+    return aggsManager.concurrentGet(rowIndex)[aggIndex].getDouble();
   }
 
   @Override
-  public boolean isNull(int rowOffset, int aggOffset)
+  public boolean isNull(IncrementalIndexRow incrementalIndexRow, int aggIndex)
   {
-    return concurrentGet(rowOffset)[aggOffset].isNull();
+    int rowIndex = incrementalIndexRow.getRowIndex();
+    return aggsManager.concurrentGet(rowIndex)[aggIndex].isNull();
   }
 
   /**
@@ -377,12 +277,10 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
   public void close()
   {
     super.close();
-    closeAggregators();
-    aggregators.clear();
+    aggsManager.closeAggregators();
+    aggsManager.clearAggregators();
     facts.clear();
-    if (selectors != null) {
-      selectors.clear();
-    }
+    aggsManager.clearSelectors();
   }
 
   // Caches references to selector objects for each column instead of creating a new object each time in order to save heap space.
@@ -427,6 +325,31 @@ public class OnheapIncrementalIndex extends IncrementalIndex<Aggregator>
     {
       return delegate.getColumnCapabilities(columnName);
     }
+  }
+
+  @Nullable
+  @Override
+  public String getMetricType(String metric)
+  {
+    return aggsManager.getMetricType(metric);
+  }
+
+  @Override
+  public ColumnValueSelector<?> makeMetricColumnValueSelector(String metric, IncrementalIndexRowHolder currEntry)
+  {
+    return aggsManager.makeMetricColumnValueSelector(metric, currEntry);
+  }
+
+  @Override
+  public List<String> getMetricNames()
+  {
+    return aggsManager.getMetricNames();
+  }
+
+  @Override
+  protected String getMetricName(int metricIndex)
+  {
+    return aggsManager.metrics[metricIndex].getName();
   }
 
 }
