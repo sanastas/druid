@@ -77,7 +77,7 @@ public class OffheapOakIncrementalIndexTest
     IncrementalIndex index = new OffheapOakIncrementalIndex.Builder()
             .setSimpleTestingIndexSchema(new CountAggregatorFactory("cnt"))
             .setMaxRowCount(1000)
-            .buildOffheapOak(2048, 100);
+            .buildOffheapOak();
 
     MapBasedInputRow[] rows = new MapBasedInputRow[6];
     long minTime = System.currentTimeMillis() - 1000 * rows.length;
@@ -307,7 +307,7 @@ public class OffheapOakIncrementalIndexTest
             .setIndexSchema(schema)
             .setDeserializeComplexMetrics(false)
             .setMaxRowCount(1000)
-            .buildOffheapOak(2048, 100);
+            .buildOffheapOak();
 
     return index;
   }

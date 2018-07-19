@@ -20,8 +20,9 @@
 package io.druid.segment.incremental;
 
 import oak.SizeCalculator;
+import io.druid.data.input.Row;
 
-public class OffheapOakValueSizeCalculator implements SizeCalculator<IncrementalIndexRow>
+public class OffheapOakValueSizeCalculator implements SizeCalculator<Row>
 {
   private int aggsTotalSize;
 
@@ -31,7 +32,7 @@ public class OffheapOakValueSizeCalculator implements SizeCalculator<Incremental
   }
 
   @Override
-  public int calculateSize(IncrementalIndexRow incrementalIndexRow)
+  public int calculateSize(Row row)
   {
     return aggsTotalSize;
   }

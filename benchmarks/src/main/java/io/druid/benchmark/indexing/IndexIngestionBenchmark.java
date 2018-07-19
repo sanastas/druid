@@ -134,7 +134,7 @@ public class IndexIngestionBenchmark
               )
               .setReportParseExceptions(false)
               .setMaxRowCount(rowsPerSegment * 2)
-              .buildOffheapOak(chunkMaxItems, chunkBytesPerItem);
+              .buildOffheapOak();
     }
   }
 

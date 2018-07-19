@@ -32,4 +32,16 @@ public abstract class InternalDataIncrementalIndex<AggregatorType> extends Incre
     super(incrementalIndexSchema, reportParseExceptions, maxRowCount);
   }
 
+  @Override
+  public int getLastRowIndex()
+  {
+    return 0; // InternalDataIncrementalIndex doesn't use the row indexes
+  }
+
+  @Override
+  public String getOutOfRowsReason()
+  {
+    return outOfRowsReason;
+  }
+
 }

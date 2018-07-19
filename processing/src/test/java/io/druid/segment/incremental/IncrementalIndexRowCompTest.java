@@ -84,7 +84,7 @@ public class IncrementalIndexRowCompTest
     IncrementalIndex index = new IncrementalIndex.Builder()
             .setSimpleTestingIndexSchema(new CountAggregatorFactory("cnt"))
             .setMaxRowCount(1000)
-            .buildOffheapOak(2048, 100);
+            .buildOffheapOak();
 
     OffheapOakIncrementalIndex oakIndex = (OffheapOakIncrementalIndex) index;
 
@@ -119,7 +119,7 @@ public class IncrementalIndexRowCompTest
     IncrementalIndex index = new IncrementalIndex.Builder()
             .setSimpleTestingIndexSchema(new CountAggregatorFactory("cnt"))
             .setMaxRowCount(1000)
-            .buildOffheapOak(2048, 100);
+            .buildOffheapOak();
 
     OffheapOakIncrementalIndex oakIndex = (OffheapOakIncrementalIndex) index;
 
@@ -142,7 +142,7 @@ public class IncrementalIndexRowCompTest
       serializer.serialize(incrementalIndexRowArray[i], incrementalIndexRowByteBufferArray[i]);
     }
 
-    Comparator<Object> comparator = oakIndex.dimsByteBufferComparator();
+    OffheapOakSerializationsComparator comparator = new OffheapOakSerializationsComparator(oakIndex.dimensionDescsList);
 
     Assert.assertEquals(0, comparator.compare(incrementalIndexRowByteBufferArray[0], incrementalIndexRowByteBufferArray[0]));
     Assert.assertEquals(0, comparator.compare(incrementalIndexRowByteBufferArray[1], incrementalIndexRowByteBufferArray[1]));

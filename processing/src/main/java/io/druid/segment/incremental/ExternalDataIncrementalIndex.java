@@ -134,10 +134,10 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
 
         return Iterators.transform(
           getFacts().iterator(descending),
-          timeAndDims -> {
-            final int rowOffset = timeAndDims.getRowIndex();
+          incrementalIndexRow -> {
+            final int rowOffset = incrementalIndexRow.getRowIndex();
 
-            Object[] theDims = timeAndDims.getDims();
+            Object[] theDims = incrementalIndexRow.getDims();
 
             Map<String, Object> theVals = Maps.newLinkedHashMap();
             for (int i = 0; i < theDims.length; ++i) {
@@ -157,9 +157,9 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
               theVals.put(dimensionName, rowVals);
             }
 
-            AggregatorType[] aggs = getAggsForRow(timeAndDims);
+            AggregatorType[] aggs = getAggsForRow(incrementalIndexRow);
             for (int i = 0; i < aggs.length; ++i) {
-              theVals.put(getMetricName(i), getAggVal(timeAndDims, i));
+              theVals.put(getMetricName(i), getAggVal(incrementalIndexRow, i));
             }
 
             if (postAggs != null) {
@@ -168,7 +168,7 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
               }
             }
 
-            return new MapBasedRow(timeAndDims.getTimestamp(), theVals);
+            return new MapBasedRow(incrementalIndexRow.getTimestamp(), theVals);
           }
         );
       }

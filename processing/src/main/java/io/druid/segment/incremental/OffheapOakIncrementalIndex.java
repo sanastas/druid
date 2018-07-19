@@ -20,8 +20,6 @@
 package io.druid.segment.incremental;
 
 import com.google.common.collect.Iterators;
-import com.google.common.primitives.Ints;
-import com.google.common.primitives.Longs;
 import io.druid.data.input.InputRow;
 import io.druid.data.input.MapBasedRow;
 import io.druid.data.input.Row;
@@ -32,13 +30,11 @@ import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.BufferAggregator;
 import io.druid.query.aggregation.PostAggregator;
 import io.druid.segment.ColumnValueSelector;
-import io.druid.segment.DimensionIndexer;
 
 import java.nio.ByteBuffer;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.List;
-import java.util.Comparator;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.druid.segment.column.ColumnCapabilitiesImpl;
@@ -72,18 +68,18 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
   static final Integer ARRAY_INDEX_OFFSET = VALUE_TYPE_OFFSET + Integer.BYTES;
   static final Integer ARRAY_LENGTH_OFFSET = ARRAY_INDEX_OFFSET + Integer.BYTES;
 
-  OakMapOffHeapImpl<IncrementalIndexRow, InputRow> oak;
+  OakMapOffHeapImpl<IncrementalIndexRow, Row> oak;
 
   private OffheapAggsManager aggsManager;
+
+  Map<String, String> env = System.getenv();
 
   OffheapOakIncrementalIndex(
           IncrementalIndexSchema incrementalIndexSchema,
           boolean deserializeComplexMetrics,
           boolean reportParseExceptions,
           boolean concurrentEventAdd,
-          int maxRowCount,
-          int chunkMaxItems,
-          int chunkBytesPerItem
+          int maxRowCount
   )
   {
     super(incrementalIndexSchema, reportParseExceptions, maxRowCount);
@@ -95,8 +91,6 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
     IncrementalIndexRow minIncrementalIndexRow = getMinIncrementalIndexRow();
 
     OakMapBuilder builder = new OakMapBuilder()
-            .setChunkMaxItems(chunkMaxItems)
-            .setChunkBytesPerItem(chunkBytesPerItem)
             .setKeySerializer(new OffheapOakKeySerializer(dimensionDescsList))
             .setKeySizeCalculator(new OffheapOakKeySizeCalculator(dimensionDescsList))
             .setValueSerializer(new OffheapOakValueSerializer(dimensionDescsList, aggsManager, reportParseExceptions, in))
@@ -105,6 +99,17 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
             .setKeysComparator(new OffheapOakKeysComparator(dimensionDescsList))
             .setSerializationsComparator(new OffheapOakSerializationsComparator(dimensionDescsList))
             .setSerializationAndKeyComparator(new OffheapOakSerializationAndKeyComparator(dimensionDescsList));
+
+    if (env != null) {
+      String chunkMaxItems = env.get("chunkMaxItems");
+      if (chunkMaxItems != null) {
+        builder = builder.setChunkMaxItems(Integer.getInteger(chunkMaxItems));
+      }
+      String chunkBytesPerItem = env.get("chunkBytesPerItem");
+      if (chunkMaxItems != null) {
+        builder = builder.setChunkBytesPerItem(Integer.getInteger(chunkBytesPerItem));
+      }
+    }
 
     oak = builder.buildOffHeapOakMap();
   }
@@ -157,12 +162,6 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
   protected long getMaxTimeMillis()
   {
     return oak.getMaxKey().getTimestamp();
-  }
-
-  @Override
-  public int getLastRowIndex()
-  {
-    return 0; // Oak doesn't use the row indexes
   }
 
   @Override
@@ -273,12 +272,6 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
     return canAdd;
   }
 
-  @Override
-  public String getOutOfRowsReason()
-  {
-    return outOfRowsReason;
-  }
-
   private Integer addToOak(
           InputRow row,
           AtomicInteger numEntries,
@@ -373,170 +366,6 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
     return new IncrementalIndexRow(this.minTimestamp, null, dimensionDescsList);
   }
 
-  public final Comparator<Object> dimsByteBufferComparator()
-  {
-    return new IncrementalIndexRowByteBuffersComp(dimensionDescsList);
-  }
-
-  static final class IncrementalIndexRowByteBuffersComp implements Comparator<Object>
-  {
-    private List<DimensionDesc> dimensionDescsList;
-
-    public IncrementalIndexRowByteBuffersComp(List<DimensionDesc> dimensionDescsList)
-    {
-      this.dimensionDescsList = dimensionDescsList;
-    }
-
-    @Override
-    public int compare(Object lhs, Object rhs)
-    {
-      if (lhs instanceof ByteBuffer) {
-        if (rhs instanceof ByteBuffer) {
-          return compareByteBuffers((ByteBuffer) lhs, (ByteBuffer) rhs);
-        } else {
-          return compareByteBufferIncrementalIndexRow((ByteBuffer) lhs, (IncrementalIndexRow) rhs);
-        }
-      } else {
-        if (rhs instanceof ByteBuffer) {
-          return compareIncrementalIndexRowByteBuffer((IncrementalIndexRow) lhs, (ByteBuffer) rhs);
-        } else {
-          return compareIncrementalIndexRows((IncrementalIndexRow) lhs, (IncrementalIndexRow) rhs);
-        }
-      }
-    }
-
-    private int compareByteBuffers(ByteBuffer lhs, ByteBuffer rhs)
-    {
-      int retVal = Longs.compare(getTimestamp(lhs), getTimestamp(rhs));
-      int numComparisons = Math.min(getDimsLength(lhs), getDimsLength(rhs));
-
-      int dimIndex = 0;
-      while (retVal == 0 && dimIndex < numComparisons) {
-        int lhsType = lhs.getInt(getDimIndexInBuffer(lhs, dimIndex));
-        int rhsType = rhs.getInt(getDimIndexInBuffer(rhs, dimIndex));
-
-        if (lhsType == NO_DIM) {
-          if (rhsType == NO_DIM) {
-            ++dimIndex;
-            continue;
-          }
-          return -1;
-        }
-
-        if (rhsType == NO_DIM) {
-          return 1;
-        }
-
-        final DimensionIndexer indexer = dimensionDescsList.get(dimIndex).getIndexer();
-        Object lhsObject = getDimValue(lhs, dimIndex);
-        Object rhsObject = getDimValue(rhs, dimIndex);
-        retVal = indexer.compareUnsortedEncodedKeyComponents(lhsObject, rhsObject);
-        ++dimIndex;
-      }
-
-      if (retVal == 0) {
-        int lengthDiff = Ints.compare(getDimsLength(lhs), getDimsLength(rhs));
-        if (lengthDiff == 0) {
-          return 0;
-        }
-        ByteBuffer largerDims = lengthDiff > 0 ? lhs : rhs;
-        return checkDimsAllNull(largerDims, numComparisons) ? 0 : lengthDiff;
-      }
-      return retVal;
-    }
-
-    private int compareIncrementalIndexRows(IncrementalIndexRow lhs, IncrementalIndexRow rhs)
-    {
-      int retVal = Longs.compare(lhs.getTimestamp(), rhs.getTimestamp());
-      int lhsDimsLength = lhs.getDims() == null ? 0 : lhs.getDims().length;
-      int rhsDimsLength = rhs.getDims() == null ? 0 : rhs.getDims().length;
-      int numComparisons = Math.min(lhsDimsLength, rhsDimsLength);
-
-      int index = 0;
-      while (retVal == 0 && index < numComparisons) {
-        final Object lhsIdxs = lhs.getDims()[index];
-        final Object rhsIdxs = rhs.getDims()[index];
-
-        if (lhsIdxs == null) {
-          if (rhsIdxs == null) {
-            ++index;
-            continue;
-          }
-          return -1;
-        }
-
-        if (rhsIdxs == null) {
-          return 1;
-        }
-
-        final DimensionIndexer indexer = dimensionDescsList.get(index).getIndexer();
-        retVal = indexer.compareUnsortedEncodedKeyComponents(lhsIdxs, rhsIdxs);
-        ++index;
-      }
-
-      if (retVal == 0) {
-        int lengthDiff = Ints.compare(lhsDimsLength, rhsDimsLength);
-        if (lengthDiff == 0) {
-          return 0;
-        }
-        Object[] largerDims = lengthDiff > 0 ? lhs.getDims() : rhs.getDims();
-        return allNull(largerDims, numComparisons) ? 0 : lengthDiff;
-      }
-
-      return retVal;
-    }
-
-    private int compareIncrementalIndexRowByteBuffer(IncrementalIndexRow lhs, ByteBuffer rhs)
-    {
-      int retVal = Longs.compare(lhs.getTimestamp(), getTimestamp(rhs));
-      int lhsDimsLength = lhs.getDims() == null ? 0 : lhs.getDims().length;
-      int rhsDimsLength = getDimsLength(rhs);
-      int numComparisons = Math.min(lhsDimsLength, rhsDimsLength);
-
-      int index = 0;
-      while (retVal == 0 && index < numComparisons) {
-        final Object lhsIdxs = lhs.getDims()[index];
-        final Object rhsIdxs = getDimValue(rhs, index);
-
-        if (lhsIdxs == null) {
-          if (rhsIdxs == null) {
-            ++index;
-            continue;
-          }
-          return -1;
-        }
-
-        if (rhsIdxs == null) {
-          return 1;
-        }
-
-        final DimensionIndexer indexer = dimensionDescsList.get(index).getIndexer();
-        retVal = indexer.compareUnsortedEncodedKeyComponents(lhsIdxs, rhsIdxs);
-        ++index;
-      }
-
-      if (retVal == 0) {
-        int lengthDiff = Ints.compare(lhsDimsLength, rhsDimsLength);
-        if (lengthDiff == 0) {
-          return 0;
-        }
-
-        if (lengthDiff > 0) {
-          return allNull(lhs.getDims(), numComparisons) ? 0 : lengthDiff;
-        } else {
-          return checkDimsAllNull(rhs, numComparisons) ? 0 : lengthDiff;
-        }
-      }
-
-      return retVal;
-    }
-
-    private int compareByteBufferIncrementalIndexRow(ByteBuffer lhs, IncrementalIndexRow rhs)
-    {
-      return compare(rhs, lhs) * (-1);
-    }
-  }
-
   @Nullable
   @Override
   public String getMetricType(String metric)
@@ -556,25 +385,26 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
     return aggsManager.getMetricNames();
   }
 
-  // Serialization utils
+  /* ---------------- Serialization utils -------------- */
+
   static long getTimestamp(ByteBuffer buff)
   {
-    return buff.getLong(buff.position() + OffheapOakIncrementalIndex.TIME_STAMP_INDEX);
+    return buff.getLong(buff.position() + TIME_STAMP_INDEX);
   }
 
   static int getDimsLength(ByteBuffer buff)
   {
-    return buff.getInt(buff.position() + OffheapOakIncrementalIndex.DIMS_LENGTH_INDEX);
+    return buff.getInt(buff.position() + DIMS_LENGTH_INDEX);
   }
 
   static int getDimIndexInBuffer(ByteBuffer buff, int dimIndex)
   {
     int dimsLength = getDimsLength(buff);
     if (dimIndex >= dimsLength) {
-      return OffheapOakIncrementalIndex.NO_DIM;
+      return NO_DIM;
     }
-    return buff.position() + OffheapOakIncrementalIndex.DIMS_INDEX +
-            dimIndex * OffheapOakIncrementalIndex.ALLOC_PER_DIM;
+    return buff.position() + DIMS_INDEX +
+            dimIndex * ALLOC_PER_DIM;
   }
 
   static Object getDimValue(ByteBuffer buff, int dimIndex)
