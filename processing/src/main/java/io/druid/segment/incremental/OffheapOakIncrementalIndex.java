@@ -40,7 +40,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import io.druid.segment.column.ColumnCapabilitiesImpl;
 import io.druid.segment.column.ValueType;
 import oak.OakMapBuilder;
-import oak.OakMapOffHeapImpl;
 import oak.OakMap;
 import oak.CloseableIterator;
 
@@ -68,7 +67,7 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
   static final Integer ARRAY_INDEX_OFFSET = VALUE_TYPE_OFFSET + Integer.BYTES;
   static final Integer ARRAY_LENGTH_OFFSET = ARRAY_INDEX_OFFSET + Integer.BYTES;
 
-  OakMapOffHeapImpl<IncrementalIndexRow, Row> oak;
+  OakMap<IncrementalIndexRow, Row> oak;
 
   private OffheapAggsManager aggsManager;
 
