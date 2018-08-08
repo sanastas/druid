@@ -24,13 +24,13 @@ import java.nio.ByteBuffer;
 
 import io.druid.segment.column.ValueType;
 import io.druid.segment.incremental.IncrementalIndex.DimensionDesc;
-import oak.KeySerializer;
+import oak.Serializer;
 
-public class OffheapOakKeySerializer implements KeySerializer<IncrementalIndexRow>
+public class OakKeySerializer implements Serializer<IncrementalIndexRow>
 {
   private List<DimensionDesc> dimensionDescsList;
 
-  public OffheapOakKeySerializer(List<DimensionDesc> dimensionDescsList)
+  public OakKeySerializer(List<DimensionDesc> dimensionDescsList)
   {
     this.dimensionDescsList = dimensionDescsList;
   }
@@ -44,27 +44,27 @@ public class OffheapOakKeySerializer implements KeySerializer<IncrementalIndexRo
 
     // calculating buffer indexes for writing the key data
     int buffIndex = buff.position();  // the first byte for writing the key
-    int timeStampIndex = buffIndex + OffheapOakIncrementalIndex.TIME_STAMP_INDEX;   // the timestamp index
-    int dimsLengthIndex = buffIndex + OffheapOakIncrementalIndex.DIMS_LENGTH_INDEX; // the dims array length index
-    int dimsIndex = buffIndex + OffheapOakIncrementalIndex.DIMS_INDEX;              // the dims array index
-    int dimCapacity = OffheapOakIncrementalIndex.ALLOC_PER_DIM;                     // the number of bytes required
+    int timeStampIndex = buffIndex + OakIncrementalIndex.TIME_STAMP_INDEX;   // the timestamp index
+    int dimsLengthIndex = buffIndex + OakIncrementalIndex.DIMS_LENGTH_INDEX; // the dims array length index
+    int dimsIndex = buffIndex + OakIncrementalIndex.DIMS_INDEX;              // the dims array index
+    int dimCapacity = OakIncrementalIndex.ALLOC_PER_DIM;                     // the number of bytes required
                                                                                     // per dim
-    int noDim = OffheapOakIncrementalIndex.NO_DIM;                                  // for mentioning that
+    int noDim = OakIncrementalIndex.NO_DIM;                                  // for mentioning that
                                                                                     // a certain dim is null
     int dimsArraysIndex = dimsIndex + dimCapacity * dimsLength;                     // the index for
                                                                                     // writing the int arrays
     // of dims with a STRING type
     int dimsArrayOffset = dimsArraysIndex - buffIndex;                              // for saving the array position
                                                                                     // in the buffer
-    int valueTypeOffset = OffheapOakIncrementalIndex.VALUE_TYPE_OFFSET;             // offset from the dimIndex
-    int dataOffset = OffheapOakIncrementalIndex.DATA_OFFSET;                        // for non-STRING dims
-    int arrayIndexOffset = OffheapOakIncrementalIndex.ARRAY_INDEX_OFFSET;           // for STRING dims
-    int arrayLengthOffset = OffheapOakIncrementalIndex.ARRAY_LENGTH_OFFSET;         // for STRING dims
+    int valueTypeOffset = OakIncrementalIndex.VALUE_TYPE_OFFSET;             // offset from the dimIndex
+    int dataOffset = OakIncrementalIndex.DATA_OFFSET;                        // for non-STRING dims
+    int arrayIndexOffset = OakIncrementalIndex.ARRAY_INDEX_OFFSET;           // for STRING dims
+    int arrayLengthOffset = OakIncrementalIndex.ARRAY_LENGTH_OFFSET;         // for STRING dims
 
     buff.putLong(timeStampIndex, timestamp);
     buff.putInt(dimsLengthIndex, dimsLength);
     for (int i = 0; i < dimsLength; i++) {
-      ValueType valueType = OffheapOakIncrementalIndex.getDimValueType(i, dimensionDescsList);
+      ValueType valueType = OakIncrementalIndex.getDimValueType(i, dimensionDescsList);
       if (valueType == null || dims[i] == null) {
         buff.putInt(dimsIndex, noDim);
       } else {
@@ -102,13 +102,45 @@ public class OffheapOakKeySerializer implements KeySerializer<IncrementalIndexRo
   @Override
   public IncrementalIndexRow deserialize(ByteBuffer serializedKey)
   {
-    long timeStamp = OffheapOakIncrementalIndex.getTimestamp(serializedKey);
-    int dimsLength = OffheapOakIncrementalIndex.getDimsLength(serializedKey);
+    long timeStamp = OakIncrementalIndex.getTimestamp(serializedKey);
+    int dimsLength = OakIncrementalIndex.getDimsLength(serializedKey);
     Object[] dims = new Object[dimsLength];
     for (int dimIndex = 0; dimIndex < dimsLength; dimIndex++) {
-      Object dim = OffheapOakIncrementalIndex.getDimValue(serializedKey, dimIndex);
+      Object dim = OakIncrementalIndex.getDimValue(serializedKey, dimIndex);
       dims[dimIndex] = dim;
     }
     return new IncrementalIndexRow(timeStamp, dims, dimensionDescsList, IncrementalIndexRow.EMPTY_ROW_INDEX);
+  }
+
+  @Override
+  public int calculateSize(IncrementalIndexRow incrementalIndexRow)
+  {
+    Object[] dims = incrementalIndexRow.getDims();
+    if (dims == null) {
+      return Long.BYTES + Integer.BYTES;
+    }
+
+    // When the dimensionDesc's capabilities are of type ValueType.STRING,
+    // the object in timeAndDims.dims is of type int[].
+    // In this case, we need to know the array size before allocating the ByteBuffer.
+    int sumOfArrayLengths = 0;
+    for (int i = 0; i < dims.length; i++) {
+      Object dim = dims[i];
+      if (dim == null) {
+        continue;
+      }
+      if (OakIncrementalIndex.getDimValueType(i, dimensionDescsList) == ValueType.STRING) {
+        sumOfArrayLengths += ((int[]) dim).length;
+      }
+    }
+
+    // The ByteBuffer will contain:
+    // 1. the timeStamp
+    // 2. dims.length
+    // 3. the serialization of each dim
+    // 4. the array (for dims with capabilities of a String ValueType)
+    int dimCapacity = OakIncrementalIndex.ALLOC_PER_DIM;
+    //log.info("OffheapOakKeySizeCalculator: " + (Long.BYTES + Integer.BYTES + dimCapacity * dims.length + Integer.BYTES * sumOfArrayLengths));
+    return Long.BYTES + Integer.BYTES + dimCapacity * dims.length + Integer.BYTES * sumOfArrayLengths;
   }
 }

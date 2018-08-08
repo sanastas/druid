@@ -22,19 +22,20 @@ package io.druid.segment.incremental;
 import io.druid.data.input.InputRow;
 
 import java.nio.ByteBuffer;
-import oak.Computer;
+import java.util.function.Consumer;
+import oak.OakWBuffer;
 
 /**
  * For sending as input parameter to the Oak's putifAbsentComputeIfPresent method
  */
-public class OffheapOakComputer implements Computer
+public class OakComputer implements Consumer<OakWBuffer>
 {
   OffheapAggsManager aggsManager;
   boolean reportParseExceptions;
   InputRow row;
   ThreadLocal<InputRow> rowContainer;
 
-  public OffheapOakComputer(
+  public OakComputer(
           OffheapAggsManager aggsManager,
           boolean reportParseExceptions,
           InputRow row,
@@ -48,8 +49,9 @@ public class OffheapOakComputer implements Computer
   }
 
   @Override
-  public void apply(ByteBuffer byteBuffer)
+  public void accept(OakWBuffer oakWBuffer)
   {
+    ByteBuffer byteBuffer = oakWBuffer.getByteBuffer();
     aggsManager.aggregate(reportParseExceptions, row, rowContainer, byteBuffer);
   }
 }

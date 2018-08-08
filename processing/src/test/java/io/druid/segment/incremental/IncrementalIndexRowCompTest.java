@@ -86,7 +86,7 @@ public class IncrementalIndexRowCompTest
             .setMaxRowCount(1000)
             .buildOffheapOak();
 
-    OffheapOakIncrementalIndex oakIndex = (OffheapOakIncrementalIndex) index;
+    OakIncrementalIndex oakIndex = (OakIncrementalIndex) index;
 
     long time = System.currentTimeMillis();
     IncrementalIndexRow[] origIncrementalIndexRow = new IncrementalIndexRow[6];
@@ -102,11 +102,10 @@ public class IncrementalIndexRowCompTest
     origIncrementalIndexRow[4] = index.toIncrementalIndexRow(toMapRow(time + 1, "billy", "A", "joe", "A,B")).getIncrementalIndexRow();
     origIncrementalIndexRow[5] = index.toIncrementalIndexRow(toMapRow(time + 1)).getIncrementalIndexRow();
 
-    OffheapOakKeySerializer serializer = new OffheapOakKeySerializer(oakIndex.dimensionDescsList);
-    OffheapOakKeySizeCalculator sizeCalculator = new OffheapOakKeySizeCalculator(oakIndex.dimensionDescsList);
+    OakKeySerializer serializer = new OakKeySerializer(oakIndex.dimensionDescsList);
 
     for (int i = 0; i < 6; i++) {
-      serializedIncrementalIndexRow[i] = ByteBuffer.allocate(sizeCalculator.calculateSize(origIncrementalIndexRow[i]));
+      serializedIncrementalIndexRow[i] = ByteBuffer.allocate(serializer.calculateSize(origIncrementalIndexRow[i]));
       serializer.serialize(origIncrementalIndexRow[i], serializedIncrementalIndexRow[i]);
       deserializedIncrementalIndexRow[i] = serializer.deserialize(serializedIncrementalIndexRow[i]);
       Assert.assertEquals(0, comparator.compare(origIncrementalIndexRow[i], deserializedIncrementalIndexRow[i]));
@@ -121,7 +120,7 @@ public class IncrementalIndexRowCompTest
             .setMaxRowCount(1000)
             .buildOffheapOak();
 
-    OffheapOakIncrementalIndex oakIndex = (OffheapOakIncrementalIndex) index;
+    OakIncrementalIndex oakIndex = (OakIncrementalIndex) index;
 
     long time = System.currentTimeMillis();
 
@@ -133,36 +132,35 @@ public class IncrementalIndexRowCompTest
     incrementalIndexRowArray[4] = index.toIncrementalIndexRow(toMapRow(time + 1, "billy", "A", "joe", "B,A")).getIncrementalIndexRow();
     incrementalIndexRowArray[5] = index.toIncrementalIndexRow(toMapRow(time + 1)).getIncrementalIndexRow();
 
-    OffheapOakKeySerializer serializer = new OffheapOakKeySerializer(oakIndex.dimensionDescsList);
-    OffheapOakKeySizeCalculator sizeCalculator = new OffheapOakKeySizeCalculator(oakIndex.dimensionDescsList);
+    OakKeySerializer serializer = new OakKeySerializer(oakIndex.dimensionDescsList);
 
     ByteBuffer[] incrementalIndexRowByteBufferArray = new ByteBuffer[6];
     for (int i = 0; i < 6; i++) {
-      incrementalIndexRowByteBufferArray[i] = ByteBuffer.allocate(sizeCalculator.calculateSize(incrementalIndexRowArray[i]));
+      incrementalIndexRowByteBufferArray[i] = ByteBuffer.allocate(serializer.calculateSize(incrementalIndexRowArray[i]));
       serializer.serialize(incrementalIndexRowArray[i], incrementalIndexRowByteBufferArray[i]);
     }
 
-    OffheapOakSerializationsComparator comparator = new OffheapOakSerializationsComparator(oakIndex.dimensionDescsList);
+    OakKeysComparator comparator = new OakKeysComparator(oakIndex.dimensionDescsList);
 
-    Assert.assertEquals(0, comparator.compare(incrementalIndexRowByteBufferArray[0], incrementalIndexRowByteBufferArray[0]));
-    Assert.assertEquals(0, comparator.compare(incrementalIndexRowByteBufferArray[1], incrementalIndexRowByteBufferArray[1]));
-    Assert.assertEquals(0, comparator.compare(incrementalIndexRowByteBufferArray[2], incrementalIndexRowByteBufferArray[2]));
+    Assert.assertEquals(0, comparator.compareSerializedKeys(incrementalIndexRowByteBufferArray[0], incrementalIndexRowByteBufferArray[0]));
+    Assert.assertEquals(0, comparator.compareSerializedKeys(incrementalIndexRowByteBufferArray[1], incrementalIndexRowByteBufferArray[1]));
+    Assert.assertEquals(0, comparator.compareSerializedKeys(incrementalIndexRowByteBufferArray[2], incrementalIndexRowByteBufferArray[2]));
 
-    Assert.assertTrue(comparator.compare(incrementalIndexRowByteBufferArray[0], incrementalIndexRowByteBufferArray[1]) > 0);
-    Assert.assertTrue(comparator.compare(incrementalIndexRowByteBufferArray[1], incrementalIndexRowByteBufferArray[0]) < 0);
-    Assert.assertTrue(comparator.compare(incrementalIndexRowByteBufferArray[1], incrementalIndexRowByteBufferArray[2]) > 0);
-    Assert.assertTrue(comparator.compare(incrementalIndexRowByteBufferArray[2], incrementalIndexRowByteBufferArray[1]) < 0);
-    Assert.assertTrue(comparator.compare(incrementalIndexRowByteBufferArray[0], incrementalIndexRowByteBufferArray[2]) > 0);
-    Assert.assertTrue(comparator.compare(incrementalIndexRowByteBufferArray[2], incrementalIndexRowByteBufferArray[0]) < 0);
+    Assert.assertTrue(comparator.compareSerializedKeys(incrementalIndexRowByteBufferArray[0], incrementalIndexRowByteBufferArray[1]) > 0);
+    Assert.assertTrue(comparator.compareSerializedKeys(incrementalIndexRowByteBufferArray[1], incrementalIndexRowByteBufferArray[0]) < 0);
+    Assert.assertTrue(comparator.compareSerializedKeys(incrementalIndexRowByteBufferArray[1], incrementalIndexRowByteBufferArray[2]) > 0);
+    Assert.assertTrue(comparator.compareSerializedKeys(incrementalIndexRowByteBufferArray[2], incrementalIndexRowByteBufferArray[1]) < 0);
+    Assert.assertTrue(comparator.compareSerializedKeys(incrementalIndexRowByteBufferArray[0], incrementalIndexRowByteBufferArray[2]) > 0);
+    Assert.assertTrue(comparator.compareSerializedKeys(incrementalIndexRowByteBufferArray[2], incrementalIndexRowByteBufferArray[0]) < 0);
 
-    Assert.assertTrue(comparator.compare(incrementalIndexRowByteBufferArray[5], incrementalIndexRowByteBufferArray[0]) > 0);
-    Assert.assertTrue(comparator.compare(incrementalIndexRowByteBufferArray[5], incrementalIndexRowByteBufferArray[1]) > 0);
-    Assert.assertTrue(comparator.compare(incrementalIndexRowByteBufferArray[5], incrementalIndexRowByteBufferArray[2]) > 0);
+    Assert.assertTrue(comparator.compareSerializedKeys(incrementalIndexRowByteBufferArray[5], incrementalIndexRowByteBufferArray[0]) > 0);
+    Assert.assertTrue(comparator.compareSerializedKeys(incrementalIndexRowByteBufferArray[5], incrementalIndexRowByteBufferArray[1]) > 0);
+    Assert.assertTrue(comparator.compareSerializedKeys(incrementalIndexRowByteBufferArray[5], incrementalIndexRowByteBufferArray[2]) > 0);
 
-    Assert.assertTrue(comparator.compare(incrementalIndexRowByteBufferArray[3], incrementalIndexRowByteBufferArray[5]) > 0);
-    Assert.assertTrue(comparator.compare(incrementalIndexRowByteBufferArray[4], incrementalIndexRowByteBufferArray[5]) > 0);
-    Assert.assertTrue(comparator.compare(incrementalIndexRowByteBufferArray[3], incrementalIndexRowByteBufferArray[4]) < 0);
-    Assert.assertTrue(comparator.compare(incrementalIndexRowByteBufferArray[4], incrementalIndexRowByteBufferArray[3]) > 0);
+    Assert.assertTrue(comparator.compareSerializedKeys(incrementalIndexRowByteBufferArray[3], incrementalIndexRowByteBufferArray[5]) > 0);
+    Assert.assertTrue(comparator.compareSerializedKeys(incrementalIndexRowByteBufferArray[4], incrementalIndexRowByteBufferArray[5]) > 0);
+    Assert.assertTrue(comparator.compareSerializedKeys(incrementalIndexRowByteBufferArray[3], incrementalIndexRowByteBufferArray[4]) < 0);
+    Assert.assertTrue(comparator.compareSerializedKeys(incrementalIndexRowByteBufferArray[4], incrementalIndexRowByteBufferArray[3]) > 0);
   }
 
   private MapBasedInputRow toMapRow(long time, Object... dimAndVal)

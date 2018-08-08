@@ -299,7 +299,7 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
         throw new IllegalArgumentException("Invalid max row count: " + maxRowCount);
       }
 
-      return new OffheapOakIncrementalIndex(
+      return new OakIncrementalIndex(
               Objects.requireNonNull(incrementalIndexSchema, "incrementalIndexSchema is null"),
               deserializeComplexMetrics,
               reportParseExceptions,

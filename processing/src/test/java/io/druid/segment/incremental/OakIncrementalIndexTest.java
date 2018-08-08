@@ -40,15 +40,15 @@ import java.util.Map;
 
 import java.util.function.Consumer;
 
-public class OffheapOakIncrementalIndexTest
+public class OakIncrementalIndexTest
 {
 
-  private static final Logger log = new Logger(OffheapOakIncrementalIndexTest.class);
+  private static final Logger log = new Logger(OakIncrementalIndexTest.class);
 
   @Test
   public void testOffHeapOakIncrementalIndexBasics() throws Exception
   {
-    OffheapOakIncrementalIndex index = getIndex();
+    OakIncrementalIndex index = getIndex();
     MapBasedInputRow[] rows = new MapBasedInputRow[6];
     long minTime = System.currentTimeMillis() - 1000 * rows.length;
 
@@ -74,7 +74,7 @@ public class OffheapOakIncrementalIndexTest
   @Test
   public void testOffHeapOakIncrementalIndexNoSchema() throws Exception
   {
-    IncrementalIndex index = new OffheapOakIncrementalIndex.Builder()
+    IncrementalIndex index = new OakIncrementalIndex.Builder()
             .setSimpleTestingIndexSchema(new CountAggregatorFactory("cnt"))
             .setMaxRowCount(1000)
             .buildOffheapOak();
@@ -105,7 +105,7 @@ public class OffheapOakIncrementalIndexTest
   @Test
   public void testOffHeapOakIncrementalIndexKeysIterator() throws Exception
   {
-    OffheapOakIncrementalIndex index = getIndex();
+    OakIncrementalIndex index = getIndex();
     MapBasedInputRow[] rows = new MapBasedInputRow[10];
 
     long time = System.currentTimeMillis();
@@ -150,7 +150,7 @@ public class OffheapOakIncrementalIndexTest
   @Test
   public void testOffHeapOakIncrementalIndexKeysTimeRangeIterable() throws Exception
   {
-    OffheapOakIncrementalIndex index = getIndex();
+    OakIncrementalIndex index = getIndex();
     MapBasedInputRow[] rows = new MapBasedInputRow[10];
 
     long time = System.currentTimeMillis();
@@ -218,7 +218,7 @@ public class OffheapOakIncrementalIndexTest
   @Test
   public void testOffHeapOakIncrementalIndexAggs() throws Exception
   {
-    OffheapOakIncrementalIndex index = getIndex();
+    OakIncrementalIndex index = getIndex();
     MapBasedInputRow[] rows = new MapBasedInputRow[10];
     int insertionTrials = 5;
 
@@ -267,7 +267,7 @@ public class OffheapOakIncrementalIndexTest
     Assert.assertEquals(index.size(), rows.length);
   }
 
-  private OffheapOakIncrementalIndex getIndex()
+  private OakIncrementalIndex getIndex()
   {
     DimensionsSpec dimensions = new DimensionsSpec(
             Arrays.<DimensionSchema>asList(
@@ -303,7 +303,7 @@ public class OffheapOakIncrementalIndexTest
             .withMetrics(metrics)
             .build();
 
-    OffheapOakIncrementalIndex index = (OffheapOakIncrementalIndex) new IncrementalIndex.Builder()
+    OakIncrementalIndex index = (OakIncrementalIndex) new IncrementalIndex.Builder()
             .setIndexSchema(schema)
             .setDeserializeComplexMetrics(false)
             .setMaxRowCount(1000)

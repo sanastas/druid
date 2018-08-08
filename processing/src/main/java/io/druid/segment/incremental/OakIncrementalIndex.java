@@ -20,6 +20,7 @@
 package io.druid.segment.incremental;
 
 import com.google.common.collect.Iterators;
+import com.google.common.collect.Maps;
 import io.druid.data.input.InputRow;
 import io.druid.data.input.MapBasedRow;
 import io.druid.data.input.Row;
@@ -36,22 +37,26 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
+import io.druid.segment.DimensionHandler;
+import io.druid.segment.DimensionIndexer;
 import io.druid.segment.column.ColumnCapabilitiesImpl;
 import io.druid.segment.column.ValueType;
 import oak.OakMapBuilder;
 import oak.OakMap;
 import oak.CloseableIterator;
+import oak.OakTransformView;
 
 import javax.annotation.Nullable;
 
 
 /**
  */
-public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<BufferAggregator>
+public class OakIncrementalIndex extends InternalDataIncrementalIndex<BufferAggregator>
 {
 
-  private static final Logger log = new Logger(OffheapOakIncrementalIndex.class);
+  private static final Logger log = new Logger(OakIncrementalIndex.class);
 
   // When serializing an object from IncrementalIndexRow.dims, we use:
   // 1. 4 bytes for representing its type (Double, Float, Long or String)
@@ -73,7 +78,7 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
 
   Map<String, String> env = System.getenv();
 
-  OffheapOakIncrementalIndex(
+  OakIncrementalIndex(
           IncrementalIndexSchema incrementalIndexSchema,
           boolean deserializeComplexMetrics,
           boolean reportParseExceptions,
@@ -90,14 +95,10 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
     IncrementalIndexRow minIncrementalIndexRow = getMinIncrementalIndexRow();
 
     OakMapBuilder builder = new OakMapBuilder()
-            .setKeySerializer(new OffheapOakKeySerializer(dimensionDescsList))
-            .setKeySizeCalculator(new OffheapOakKeySizeCalculator(dimensionDescsList))
-            .setValueSerializer(new OffheapOakValueSerializer(dimensionDescsList, aggsManager, reportParseExceptions, in))
-            .setValueSizeCalculator(new OffheapOakValueSizeCalculator(aggsManager.aggsTotalSize))
+            .setKeySerializer(new OakKeySerializer(dimensionDescsList))
+            .setValueSerializer(new OakValueSerializer(dimensionDescsList, aggsManager, reportParseExceptions, in))
             .setMinKey(minIncrementalIndexRow)
-            .setKeysComparator(new OffheapOakKeysComparator(dimensionDescsList))
-            .setSerializationsComparator(new OffheapOakSerializationsComparator(dimensionDescsList))
-            .setSerializationAndKeyComparator(new OffheapOakSerializationAndKeyComparator(dimensionDescsList));
+            .setComparator(new OakKeysComparator(dimensionDescsList));
 
     if (env != null) {
       String chunkMaxItems = env.get("chunkMaxItems");
@@ -110,14 +111,52 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
       }
     }
 
-    oak = builder.buildOffHeapOakMap();
+    oak = builder.build();
   }
 
   @Override
   public Iterable<Row> iterableWithPostAggregations(List<PostAggregator> postAggs, boolean descending)
   {
-    OakMap oakMap = descending ? oak.descendingMap() : oak;
-    CloseableIterator<Row> valuesIterator = oakMap.valuesIterator();
+    Function<Map.Entry<ByteBuffer, ByteBuffer>, Row> transformer = new Function<Map.Entry<ByteBuffer, ByteBuffer>, Row>()
+    {
+
+      @Override
+      public Row apply(Map.Entry<ByteBuffer, ByteBuffer> entry)
+      {
+        ByteBuffer serializedKey = entry.getKey();
+        ByteBuffer serializedValue = entry.getValue();
+        long timeStamp = OakIncrementalIndex.getTimestamp(serializedKey);
+        int dimsLength = OakIncrementalIndex.getDimsLength(serializedKey);
+        Map<String, Object> theVals = Maps.newLinkedHashMap();
+        for (int i = 0; i < dimsLength; ++i) {
+          Object dim = OakIncrementalIndex.getDimValue(serializedKey, i);
+          DimensionDesc dimensionDesc = dimensionDescsList.get(i);
+          if (dimensionDesc == null) {
+            continue;
+          }
+          String dimensionName = dimensionDesc.getName();
+          DimensionHandler handler = dimensionDesc.getHandler();
+          if (dim == null || handler.getLengthOfEncodedKeyComponent(dim) == 0) {
+            theVals.put(dimensionName, null);
+            continue;
+          }
+          final DimensionIndexer indexer = dimensionDesc.getIndexer();
+          Object rowVals = indexer.convertUnsortedEncodedKeyComponentToActualArrayOrList(dim, DimensionIndexer.LIST);
+          theVals.put(dimensionName, rowVals);
+        }
+
+        BufferAggregator[] aggs = aggsManager.getAggs();
+        for (int i = 0; i < aggs.length; ++i) {
+          theVals.put(aggsManager.metrics[i].getName(), aggs[i].get(serializedValue, aggsManager.aggOffsetInBuffer[i]));
+        }
+
+        return new MapBasedRow(timeStamp, theVals);
+      }
+    };
+
+    OakMap tmpOakMap = descending ? oak.descendingMap() : oak;
+    OakTransformView transformView = tmpOakMap.createTransformView(transformer);
+    CloseableIterator<Row> valuesIterator = transformView.valuesIterator();
     return new Iterable<Row>()
     {
       @Override
@@ -125,31 +164,14 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
       {
         return Iterators.transform(
             valuesIterator,
-            new com.google.common.base.Function<Row, Row>() {
-              @Nullable
-              @Override
-              public Row apply(@Nullable Row row)
-              {
-                Map<String, Object> event = ((MapBasedRow) row).getEvent();
-                long timestamp = ((MapBasedRow) row).getTimestamp().getMillis();
-                if (postAggs != null) {
-                  for (PostAggregator postAgg : postAggs) {
-                    event.put(postAgg.getName(), postAgg.compute(event));
-                  }
-                }
-                return new MapBasedRow(timestamp, event);
-              }
-            }
+            row -> row
         );
       }
     };
   }
 
   @Override
-  public void close()
-  {
-    oak.close();
-  }
+  public void close() {}
 
   @Override
   protected long getMinTimeMillis()
@@ -172,49 +194,103 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
   @Override
   protected Object getAggVal(IncrementalIndexRow incrementalIndexRow, int aggIndex)
   {
-    BufferAggregator agg = getAggs()[aggIndex];
-    return oak.getTransformation(incrementalIndexRow, buff -> agg.get(buff,
-            buff.position() + aggsManager.aggOffsetInBuffer[aggIndex]));
+    Function<Map.Entry<ByteBuffer, ByteBuffer>, Object> transformer = new Function<Map.Entry<ByteBuffer, ByteBuffer>, Object>() {
+      @Override
+      public Object apply(Map.Entry<ByteBuffer, ByteBuffer> entry)
+      {
+        ByteBuffer serializedValue = entry.getValue();
+        BufferAggregator agg = getAggs()[aggIndex];
+        return agg.get(serializedValue, serializedValue.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
+      }
+    };
+
+    OakTransformView<IncrementalIndexRow, Object> transformView = (OakTransformView<IncrementalIndexRow, Object>) oak.createTransformView(transformer);
+    return transformView.get(incrementalIndexRow);
   }
 
   @Override
   protected float getMetricFloatValue(IncrementalIndexRow incrementalIndexRow, int aggIndex)
   {
-    BufferAggregator agg = getAggs()[aggIndex];
-    return oak.getTransformation(incrementalIndexRow, buff -> agg.getFloat(buff,
-            buff.position() + aggsManager.aggOffsetInBuffer[aggIndex]));
+    Function<Map.Entry<ByteBuffer, ByteBuffer>, Float> transformer = new Function<Map.Entry<ByteBuffer, ByteBuffer>, Float>() {
+      @Override
+      public Float apply(Map.Entry<ByteBuffer, ByteBuffer> entry)
+      {
+        ByteBuffer serializedValue = entry.getValue();
+        BufferAggregator agg = getAggs()[aggIndex];
+        return agg.getFloat(serializedValue, serializedValue.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
+      }
+    };
+
+    OakTransformView<IncrementalIndexRow, Float> transformView = (OakTransformView<IncrementalIndexRow, Float>) oak.createTransformView(transformer);
+    return transformView.get(incrementalIndexRow);
   }
 
   @Override
   protected long getMetricLongValue(IncrementalIndexRow incrementalIndexRow, int aggIndex)
   {
-    BufferAggregator agg = getAggs()[aggIndex];
-    return oak.getTransformation(incrementalIndexRow, buff -> agg.getLong(buff,
-            buff.position() + aggsManager.aggOffsetInBuffer[aggIndex]));
+    Function<Map.Entry<ByteBuffer, ByteBuffer>, Long> transformer = new Function<Map.Entry<ByteBuffer, ByteBuffer>, Long>() {
+      @Override
+      public Long apply(Map.Entry<ByteBuffer, ByteBuffer> entry)
+      {
+        ByteBuffer serializedValue = entry.getValue();
+        BufferAggregator agg = getAggs()[aggIndex];
+        return agg.getLong(serializedValue, serializedValue.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
+      }
+    };
+
+    OakTransformView<IncrementalIndexRow, Long> transformView = (OakTransformView<IncrementalIndexRow, Long>) oak.createTransformView(transformer);
+    return transformView.get(incrementalIndexRow);
   }
 
   @Override
   protected Object getMetricObjectValue(IncrementalIndexRow incrementalIndexRow, int aggIndex)
   {
-    BufferAggregator agg = getAggs()[aggIndex];
-    return oak.getTransformation(incrementalIndexRow, buff -> agg.get(buff,
-            buff.position() + aggsManager.aggOffsetInBuffer[aggIndex]));
+    Function<Map.Entry<ByteBuffer, ByteBuffer>, Object> transformer = new Function<Map.Entry<ByteBuffer, ByteBuffer>, Object>() {
+      @Override
+      public Object apply(Map.Entry<ByteBuffer, ByteBuffer> entry)
+      {
+        ByteBuffer serializedValue = entry.getValue();
+        BufferAggregator agg = getAggs()[aggIndex];
+        return agg.get(serializedValue, serializedValue.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
+      }
+    };
+
+    OakTransformView<IncrementalIndexRow, Object> transformView = (OakTransformView<IncrementalIndexRow, Object>) oak.createTransformView(transformer);
+    return transformView.get(incrementalIndexRow);
   }
 
   @Override
   protected double getMetricDoubleValue(IncrementalIndexRow incrementalIndexRow, int aggIndex)
   {
-    BufferAggregator agg = getAggs()[aggIndex];
-    return oak.getTransformation(incrementalIndexRow, buff -> agg.getDouble(buff,
-            buff.position() + aggsManager.aggOffsetInBuffer[aggIndex]));
+    Function<Map.Entry<ByteBuffer, ByteBuffer>, Double> transformer = new Function<Map.Entry<ByteBuffer, ByteBuffer>, Double>() {
+      @Override
+      public Double apply(Map.Entry<ByteBuffer, ByteBuffer> entry)
+      {
+        ByteBuffer serializedValue = entry.getValue();
+        BufferAggregator agg = getAggs()[aggIndex];
+        return agg.getDouble(serializedValue, serializedValue.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
+      }
+    };
+
+    OakTransformView<IncrementalIndexRow, Double> transformView = (OakTransformView<IncrementalIndexRow, Double>) oak.createTransformView(transformer);
+    return transformView.get(incrementalIndexRow);
   }
 
   @Override
   protected boolean isNull(IncrementalIndexRow incrementalIndexRow, int aggIndex)
   {
-    BufferAggregator agg = getAggs()[aggIndex];
-    return oak.getTransformation(incrementalIndexRow, buff -> agg.isNull(buff,
-            buff.position() + aggsManager.aggOffsetInBuffer[aggIndex]));
+    Function<Map.Entry<ByteBuffer, ByteBuffer>, Boolean> transformer = new Function<Map.Entry<ByteBuffer, ByteBuffer>, Boolean>() {
+      @Override
+      public Boolean apply(Map.Entry<ByteBuffer, ByteBuffer> entry)
+      {
+        ByteBuffer serializedValue = entry.getValue();
+        BufferAggregator agg = getAggs()[aggIndex];
+        return agg.isNull(serializedValue, serializedValue.position() + aggsManager.aggOffsetInBuffer[aggIndex]);
+      }
+    };
+
+    OakTransformView<IncrementalIndexRow, Boolean> transformView = (OakTransformView<IncrementalIndexRow, Boolean>) oak.createTransformView(transformer);
+    return transformView.get(incrementalIndexRow);
   }
 
   @Override
@@ -279,7 +355,7 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
           boolean skipMaxRowsInMemoryCheck
   ) throws IndexSizeExceededException
   {
-    OffheapOakComputer computer = new OffheapOakComputer(aggsManager, reportParseExceptions,
+    OakComputer computer = new OakComputer(aggsManager, reportParseExceptions,
             row, rowContainer);
     if (numEntries.get() < maxRowCount || skipMaxRowsInMemoryCheck) {
       oak.putIfAbsentComputeIfPresent(incrementalIndexRow, row, computer);
@@ -415,18 +491,18 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
     }
     int dimIndexInBuffer = getDimIndexInBuffer(buff, dimIndex);
     int dimType = buff.getInt(getDimIndexInBuffer(buff, dimIndex));
-    if (dimType == OffheapOakIncrementalIndex.NO_DIM) {
+    if (dimType == OakIncrementalIndex.NO_DIM) {
       return null;
     } else if (dimType == ValueType.DOUBLE.ordinal()) {
-      dimObject = buff.getDouble(dimIndexInBuffer + OffheapOakIncrementalIndex.DATA_OFFSET);
+      dimObject = buff.getDouble(dimIndexInBuffer + OakIncrementalIndex.DATA_OFFSET);
     } else if (dimType == ValueType.FLOAT.ordinal()) {
-      dimObject = buff.getFloat(dimIndexInBuffer + OffheapOakIncrementalIndex.DATA_OFFSET);
+      dimObject = buff.getFloat(dimIndexInBuffer + OakIncrementalIndex.DATA_OFFSET);
     } else if (dimType == ValueType.LONG.ordinal()) {
-      dimObject = buff.getLong(dimIndexInBuffer + OffheapOakIncrementalIndex.DATA_OFFSET);
+      dimObject = buff.getLong(dimIndexInBuffer + OakIncrementalIndex.DATA_OFFSET);
     } else if (dimType == ValueType.STRING.ordinal()) {
-      int arrayIndexOffset = buff.getInt(dimIndexInBuffer + OffheapOakIncrementalIndex.ARRAY_INDEX_OFFSET);
+      int arrayIndexOffset = buff.getInt(dimIndexInBuffer + OakIncrementalIndex.ARRAY_INDEX_OFFSET);
       int arrayIndex = buff.position() + arrayIndexOffset;
-      int arraySize = buff.getInt(dimIndexInBuffer + OffheapOakIncrementalIndex.ARRAY_LENGTH_OFFSET);
+      int arraySize = buff.getInt(dimIndexInBuffer + OakIncrementalIndex.ARRAY_LENGTH_OFFSET);
       int[] array = new int[arraySize];
       for (int i = 0; i < arraySize; i++) {
         array[i] = buff.getInt(arrayIndex);
@@ -442,7 +518,7 @@ public class OffheapOakIncrementalIndex extends InternalDataIncrementalIndex<Buf
   {
     int dimsLength = getDimsLength(buff);
     for (int index = 0; index < Math.min(dimsLength, numComparisons); index++) {
-      if (buff.getInt(getDimIndexInBuffer(buff, index)) != OffheapOakIncrementalIndex.NO_DIM) {
+      if (buff.getInt(getDimIndexInBuffer(buff, index)) != OakIncrementalIndex.NO_DIM) {
         return false;
       }
     }
