@@ -31,11 +31,7 @@ import io.druid.query.aggregation.PostAggregator;
 import io.druid.segment.DimensionHandler;
 import io.druid.segment.DimensionIndexer;
 
-import java.util.Comparator;
-import java.util.Deque;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ConcurrentMap;
@@ -43,6 +39,7 @@ import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Stream;
 
 /**
  */
@@ -60,7 +57,7 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
   {
     super(incrementalIndexSchema, reportParseExceptions, maxRowCount);
     this.facts = incrementalIndexSchema.isRollup() ? new RollupFactsHolder(sortFacts, dimsComparator(), getDimensions())
-            : new PlainFactsHolder(sortFacts);
+            : new PlainFactsHolder(sortFacts, dimsComparator());
   }
 
   protected abstract FactsHolder getFacts();
@@ -100,11 +97,13 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
     return new IncrementalIndexAddResult(addToFactsResult.getRowCount(), addToFactsResult.getBytesInMemory(), parseException);
   }
 
+  @Override
   protected long getMinTimeMillis()
   {
     return getFacts().getMinTimeMillis();
   }
 
+  @Override
   protected long getMaxTimeMillis()
   {
     return getFacts().getMaxTimeMillis();
@@ -112,17 +111,26 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
 
   protected abstract String getMetricName(int metricIndex);
 
+  @Override
   public Iterable<IncrementalIndexRow> timeRangeIterable(
           boolean descending, long timeStart, long timeEnd)
   {
     return getFacts().timeRangeIterable(descending, timeStart, timeEnd);
   }
 
+  @Override
   public Iterable<IncrementalIndexRow> keySet()
   {
     return getFacts().keySet();
   }
 
+  @Override
+  public Iterable<IncrementalIndexRow> persistIterable()
+  {
+    return getFacts().persistIterable();
+  }
+
+  @Override
   public Iterable<Row> iterableWithPostAggregations(final List<PostAggregator> postAggs, final boolean descending)
   {
     return new Iterable<Row>()
@@ -135,7 +143,6 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
         return Iterators.transform(
           getFacts().iterator(descending),
           incrementalIndexRow -> {
-            final int rowOffset = incrementalIndexRow.getRowIndex();
 
             Object[] theDims = incrementalIndexRow.getDims();
 
@@ -180,7 +187,7 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
   {
     /**
      * @return the previous rowIndex associated with the specified key, or
-     * {@code IncrementalIndexRow#EMPTY_ROW_INDEX} if there was no mapping for the key.
+     * {@link IncrementalIndexRow#EMPTY_ROW_INDEX} if there was no mapping for the key.
      */
     int getPriorIndex(IncrementalIndexRow key);
 
@@ -195,8 +202,14 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
     Iterable<IncrementalIndexRow> keySet();
 
     /**
+     * Get all {@link IncrementalIndexRow} to persist, ordered with {@link Comparator<IncrementalIndexRow>}
+     * @return
+     */
+    Iterable<IncrementalIndexRow> persistIterable();
+
+    /**
      * @return the previous rowIndex associated with the specified key, or
-     * {@code IncrementalIndexRow#EMPTY_ROW_INDEX} if there was no mapping for the key.
+     * {@link IncrementalIndexRow#EMPTY_ROW_INDEX} if there was no mapping for the key.
      */
     int putIfAbsent(IncrementalIndexRow key, int rowIndex);
 
@@ -207,15 +220,18 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
   {
     private final boolean sortFacts;
     // Can't use Set because we need to be able to get from collection
-    private final ConcurrentMap<IncrementalIndexRow, IncrementalIndexRow>
-            facts;
+    private final ConcurrentMap<IncrementalIndexRow, IncrementalIndexRow> facts;
     private final List<DimensionDesc> dimensionDescsList;
 
-    public RollupFactsHolder(boolean sortFacts, Comparator<IncrementalIndexRow> timeAndDimsComparator, List<DimensionDesc> dimensionDescsList)
+    RollupFactsHolder(
+            boolean sortFacts,
+            Comparator<IncrementalIndexRow> incrementalIndexRowComparator,
+            List<DimensionDesc> dimensionDescsList
+    )
     {
       this.sortFacts = sortFacts;
       if (sortFacts) {
-        this.facts = new ConcurrentSkipListMap<>(timeAndDimsComparator);
+        this.facts = new ConcurrentSkipListMap<>(incrementalIndexRowComparator);
       } else {
         this.facts = new ConcurrentHashMap<>();
       }
@@ -225,10 +241,8 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
     @Override
     public int getPriorIndex(IncrementalIndexRow key)
     {
-      IncrementalIndexRow timeAndDims = facts.get(key);
-      return timeAndDims == null ?
-              IncrementalIndexRow.EMPTY_ROW_INDEX :
-              timeAndDims.getRowIndex();
+      IncrementalIndexRow row = facts.get(key);
+      return row == null ? IncrementalIndexRow.EMPTY_ROW_INDEX : row.getRowIndex();
     }
 
     @Override
@@ -281,6 +295,13 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
     }
 
     @Override
+    public Iterable<IncrementalIndexRow> persistIterable()
+    {
+      // with rollup, facts are already pre-sorted so just return keyset
+      return keySet();
+    }
+
+    @Override
     public int putIfAbsent(IncrementalIndexRow key, int rowIndex)
     {
       // setRowIndex() must be called before facts.putIfAbsent() for visibility of rowIndex from concurrent readers.
@@ -301,7 +322,9 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
     private final boolean sortFacts;
     private final ConcurrentMap<Long, Deque<IncrementalIndexRow>> facts;
 
-    public PlainFactsHolder(boolean sortFacts)
+    private final Comparator<IncrementalIndexRow> incrementalIndexRowComparator;
+
+    public PlainFactsHolder(boolean sortFacts, Comparator<IncrementalIndexRow> incrementalIndexRowComparator)
     {
       this.sortFacts = sortFacts;
       if (sortFacts) {
@@ -309,6 +332,7 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
       } else {
         this.facts = new ConcurrentHashMap<>();
       }
+      this.incrementalIndexRowComparator = incrementalIndexRowComparator;
     }
 
     @Override
@@ -342,10 +366,10 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
     public Iterator<IncrementalIndexRow> iterator(boolean descending)
     {
       if (descending && sortFacts) {
-        return concat(((ConcurrentNavigableMap<Long, Deque<IncrementalIndexRow>>) facts)
+        return timeOrderedConcat(((ConcurrentNavigableMap<Long, Deque<IncrementalIndexRow>>) facts)
                 .descendingMap().values(), true).iterator();
       }
-      return concat(facts.values(), false).iterator();
+      return timeOrderedConcat(facts.values(), false).iterator();
     }
 
     @Override
@@ -354,7 +378,29 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
       ConcurrentNavigableMap<Long, Deque<IncrementalIndexRow>> subMap =
               ((ConcurrentNavigableMap<Long, Deque<IncrementalIndexRow>>) facts).subMap(timeStart, timeEnd);
       final Map<Long, Deque<IncrementalIndexRow>> rangeMap = descending ? subMap.descendingMap() : subMap;
-      return concat(rangeMap.values(), descending);
+      return timeOrderedConcat(rangeMap.values(), descending);
+    }
+
+    private Iterable<IncrementalIndexRow> timeOrderedConcat(
+            final Iterable<Deque<IncrementalIndexRow>> iterable,
+            final boolean descending
+    )
+    {
+      return () -> Iterators.concat(
+              Iterators.transform(
+                      iterable.iterator(),
+                      input -> descending ? input.descendingIterator() : input.iterator()
+              )
+      );
+    }
+
+    private Stream<IncrementalIndexRow> timeAndDimsOrderedConcat(
+            final Collection<Deque<IncrementalIndexRow>> rowGroups
+    )
+    {
+      return rowGroups.stream()
+              .flatMap(Collection::stream)
+              .sorted(incrementalIndexRowComparator);
     }
 
     private Iterable<IncrementalIndexRow> concat(
@@ -373,7 +419,13 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
     @Override
     public Iterable<IncrementalIndexRow> keySet()
     {
-      return concat(facts.values(), false);
+      return timeOrderedConcat(facts.values(), false);
+    }
+
+    @Override
+    public Iterable<IncrementalIndexRow> persistIterable()
+    {
+      return () -> timeAndDimsOrderedConcat(facts.values()).iterator();
     }
 
     @Override

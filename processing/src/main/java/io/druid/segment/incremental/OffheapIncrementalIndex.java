@@ -47,8 +47,6 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
 {
   private static final Logger log = new Logger(OffheapIncrementalIndex.class);
 
-  private final NonBlockingPool<ByteBuffer> bufferPool;
-
   private final List<ResourceHolder<ByteBuffer>> aggBuffers = new ArrayList<>();
   private final List<int[]> indexAndOffsets = new ArrayList<>();
 
@@ -57,17 +55,16 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
   protected OffheapAggsManager aggsManager;
 
   OffheapIncrementalIndex(
-          IncrementalIndexSchema incrementalIndexSchema,
-          boolean deserializeComplexMetrics,
-          boolean reportParseExceptions,
-          boolean concurrentEventAdd,
-          boolean sortFacts,
-          int maxRowCount,
-          NonBlockingPool<ByteBuffer> bufferPool
+      IncrementalIndexSchema incrementalIndexSchema,
+      boolean deserializeComplexMetrics,
+      boolean reportParseExceptions,
+      boolean concurrentEventAdd,
+      boolean sortFacts,
+      int maxRowCount,
+      NonBlockingPool<ByteBuffer> bufferPool
   )
   {
     super(incrementalIndexSchema, reportParseExceptions, sortFacts, maxRowCount);
-    this.bufferPool = bufferPool;
 
     this.aggsManager = new OffheapAggsManager(incrementalIndexSchema, deserializeComplexMetrics,
             reportParseExceptions, concurrentEventAdd, rowSupplier,
@@ -102,14 +99,14 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
 
   @Override
   protected AddToFactsResult addToFacts(
-          boolean reportParseExceptions,
-          InputRow row,
-          AtomicInteger numEntries,
-          AtomicLong sizeInBytes, // ignored, added to make abstract class method impl happy
-          IncrementalIndexRow key,
-          ThreadLocal<InputRow> rowContainer,
-          Supplier<InputRow> rowSupplier,
-          boolean skipMaxRowsInMemoryCheck // ignored, we always want to check this for offheap
+      boolean reportParseExceptions,
+      InputRow row,
+      AtomicInteger numEntries,
+      AtomicLong sizeInBytes, // ignored, added to make abstract class method impl happy
+      IncrementalIndexRow key,
+      ThreadLocal<InputRow> rowContainer,
+      Supplier<InputRow> rowSupplier,
+      boolean skipMaxRowsInMemoryCheck // ignored, we always want to check this for offheap
   ) throws IndexSizeExceededException
   {
     ByteBuffer aggBuffer;
@@ -147,7 +144,7 @@ public class OffheapIncrementalIndex extends ExternalDataIncrementalIndex<Buffer
 
         bufferOffset = aggsManager.aggsTotalSize + (lastAggregatorsIndexAndOffset != null ? lastAggregatorsIndexAndOffset[1] : 0);
         if (lastBuffer != null &&
-                lastBuffer.capacity() - bufferOffset >= aggsManager.aggsTotalSize) {
+            lastBuffer.capacity() - bufferOffset >= aggsManager.aggsTotalSize) {
           aggBuffer = lastBuffer;
         } else {
           ResourceHolder<ByteBuffer> bb = aggsManager.bufferPool.take();

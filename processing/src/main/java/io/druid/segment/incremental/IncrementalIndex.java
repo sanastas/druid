@@ -136,7 +136,7 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
     this.columnCapabilities = Maps.newHashMap();
     this.metadata = new Metadata(
             null,
-            getCombiningAggregators(incrementalIndexSchema.getMetrics()),
+            AggsManager.getCombiningAggregators(incrementalIndexSchema.getMetrics()),
             incrementalIndexSchema.getTimestampSpec(),
             this.gran,
             this.rollup
@@ -393,6 +393,8 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
 
   public abstract Iterable<IncrementalIndexRow> keySet();
 
+  public abstract Iterable<IncrementalIndexRow> persistIterable();
+
   @Override
   public void close()
   {
@@ -478,8 +480,8 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
         Object dimsKey = null;
         try {
           dimsKey = indexer.processRowValsToUnsortedEncodedKeyComponent(
-                  row.getRaw(dimension),
-                  true
+              row.getRaw(dimension),
+              true
           );
         }
         catch (ParseException pe) {
@@ -488,8 +490,8 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
         dimsKeySize += indexer.estimateEncodedKeyComponentSize(dimsKey);
         // Set column capabilities as data is coming in
         if (!capabilities.hasMultipleValues() &&
-                dimsKey != null &&
-                handler.getLengthOfEncodedKeyComponent(dimsKey) > 1) {
+            dimsKey != null &&
+            handler.getLengthOfEncodedKeyComponent(dimsKey) > 1) {
           capabilities.setHasMultipleValues(true);
         }
 
@@ -530,18 +532,18 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
       truncated = gran.bucketStart(row.getTimestamp()).getMillis();
     }
     IncrementalIndexRow incrementalIndexRow = IncrementalIndexRow.createTimeAndDimswithDimsKeySize(
-            Math.max(truncated, minTimestamp),
-            dims,
-            dimensionDescsList,
-            dimsKeySize
+        Math.max(truncated, minTimestamp),
+        dims,
+        dimensionDescsList,
+        dimsKeySize
     );
     return new IncrementalIndexRowResult(incrementalIndexRow, parseExceptionMessages);
   }
 
   public static ParseException getCombinedParseException(
-          InputRow row,
-          @Nullable List<String> dimParseExceptionMessages,
-          @Nullable List<String> aggParseExceptionMessages
+      InputRow row,
+      @Nullable List<String> dimParseExceptionMessages,
+      @Nullable List<String> aggParseExceptionMessages
   )
   {
     int numAdded = 0;
@@ -566,9 +568,9 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
       return null;
     }
     ParseException pe = new ParseException(
-            "Found unparseable columns in row: [%s], exceptions: [%s]",
-            row,
-            stringBuilder.toString()
+        "Found unparseable columns in row: [%s], exceptions: [%s]",
+        row,
+        stringBuilder.toString()
     );
     pe.setFromPartiallyValidRow(true);
     return pe;
@@ -726,24 +728,6 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
   public Metadata getMetadata()
   {
     return metadata;
-  }
-
-  private static AggregatorFactory[] getCombiningAggregators(AggregatorFactory[] aggregators)
-  {
-    AggregatorFactory[] combiningAggregators = new AggregatorFactory[aggregators.length];
-    for (int i = 0; i < aggregators.length; i++) {
-      combiningAggregators[i] = aggregators[i].getCombiningFactory();
-    }
-    return combiningAggregators;
-  }
-
-  public Map<String, DimensionHandler> getDimensionHandlers()
-  {
-    Map<String, DimensionHandler> handlers = Maps.newLinkedHashMap();
-    for (DimensionDesc desc : dimensionDescsList) {
-      handlers.put(desc.getName(), desc.getHandler());
-    }
-    return handlers;
   }
 
   @Override

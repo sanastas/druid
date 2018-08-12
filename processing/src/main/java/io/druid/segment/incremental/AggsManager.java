@@ -126,7 +126,7 @@ public abstract class AggsManager<AggregatorType>
     return ImmutableList.copyOf(metricDescs.keySet());
   }
 
-  public AggregatorFactory[] getCombiningAggregators(AggregatorFactory[] aggregators)
+  public static AggregatorFactory[] getCombiningAggregators(AggregatorFactory[] aggregators)
   {
     AggregatorFactory[] combiningAggregators = new AggregatorFactory[aggregators.length];
     for (int i = 0; i < aggregators.length; i++) {

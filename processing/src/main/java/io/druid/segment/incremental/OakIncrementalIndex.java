@@ -171,6 +171,12 @@ public class OakIncrementalIndex extends InternalDataIncrementalIndex<BufferAggr
   }
 
   @Override
+  public Iterable<IncrementalIndexRow> persistIterable()
+  {
+    return keySet();
+  }
+
+  @Override
   public void close() {}
 
   @Override

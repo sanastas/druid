@@ -87,7 +87,7 @@ public class OffheapAggsManager extends AggsManager<BufferAggregator>
       );
 
       if (i == 0) {
-        aggOffsetInBuffer[i] = metrics[i].getMaxIntermediateSize();
+        aggOffsetInBuffer[i] = 0;
       } else {
         aggOffsetInBuffer[i] = aggOffsetInBuffer[i - 1] + metrics[i - 1].getMaxIntermediateSize();
       }
