@@ -77,7 +77,7 @@ public class OakIncrementalIndexTest
     IncrementalIndex index = new OakIncrementalIndex.Builder()
             .setSimpleTestingIndexSchema(true, new CountAggregatorFactory("cnt"))
             .setMaxRowCount(1000)
-            .buildOffheapOak();
+            .buildOffheapOak(64, 256);
 
     MapBasedInputRow[] rows = new MapBasedInputRow[6];
     long minTime = System.currentTimeMillis() - 1000 * rows.length;
@@ -363,7 +363,7 @@ public class OakIncrementalIndexTest
             .setIndexSchema(schema)
             .setDeserializeComplexMetrics(false)
             .setMaxRowCount(1000)
-            .buildOffheapOak();
+            .buildOffheapOak(64, 256);
 
     return index;
   }

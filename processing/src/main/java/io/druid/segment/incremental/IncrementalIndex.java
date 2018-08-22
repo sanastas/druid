@@ -308,7 +308,7 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
       );
     }
 
-    public IncrementalIndex buildOffheapOak()
+    public IncrementalIndex buildOffheapOak(int chunkMaxItems, int chunkBytesPerItem)
     {
       if (maxRowCount <= 0) {
         throw new IllegalArgumentException("Invalid max row count: " + maxRowCount);
@@ -319,10 +319,14 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
               deserializeComplexMetrics,
               reportParseExceptions,
               concurrentEventAdd,
-              maxRowCount
+              maxRowCount,
+              chunkMaxItems,
+              chunkBytesPerItem
       );
     }
   }
+
+  public abstract void getRebalanceCount();
 
   public boolean isRollup()
   {

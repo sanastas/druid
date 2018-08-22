@@ -84,7 +84,7 @@ public class IncrementalIndexRowCompTest
     IncrementalIndex index = new IncrementalIndex.Builder()
             .setSimpleTestingIndexSchema(true, new CountAggregatorFactory("cnt"))
             .setMaxRowCount(1000)
-            .buildOffheapOak();
+            .buildOffheapOak(64, 256);
 
     OakIncrementalIndex oakIndex = (OakIncrementalIndex) index;
 
@@ -118,7 +118,7 @@ public class IncrementalIndexRowCompTest
     IncrementalIndex index = new IncrementalIndex.Builder()
             .setSimpleTestingIndexSchema(true, new CountAggregatorFactory("cnt"))
             .setMaxRowCount(1000)
-            .buildOffheapOak();
+            .buildOffheapOak(64, 256);
 
     OakIncrementalIndex oakIndex = (OakIncrementalIndex) index;
 

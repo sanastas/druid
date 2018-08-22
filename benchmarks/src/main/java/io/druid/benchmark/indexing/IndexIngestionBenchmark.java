@@ -53,6 +53,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Measurement(iterations = 25)
 public class IndexIngestionBenchmark
 {
+  @Param({"true", "false"})
+  private boolean rollup;
+
   @Param({"10000", "75000"})
   private int rowsPerSegment;
 
@@ -60,16 +63,13 @@ public class IndexIngestionBenchmark
   private String schema;
 
   @Param({"true", "false"})
-  private boolean rollup;
-
-  @Param({"true", "false"})
   private boolean onheap;
 
   @Param({"256"})
-  private int chunkMaxItems;
-
-  @Param({"64"})
   private int chunkBytesPerItem;
+
+  @Param({"128"})
+  private int chunkMaxItems;
 
   private static final Logger log = new Logger(IndexIngestionBenchmark.class);
   private static final int RNG_SEED = 9999;
@@ -78,6 +78,7 @@ public class IndexIngestionBenchmark
   private ArrayList<InputRow> rows;
   private BenchmarkSchemaInfo schemaInfo;
   private AtomicInteger version;
+
 
   @Setup
   public void setup() throws IOException
@@ -96,9 +97,9 @@ public class IndexIngestionBenchmark
 
     for (int i = 0; i < rowsPerSegment; i++) {
       InputRow row = gen.nextRow();
-      if (i % 10000 == 0) {
-        log.info(i + " rows generated.");
-      }
+//      if (i % 10000 == 0) {
+//        log.info(i + " rows generated.");
+//      }
       rows.add(row);
     }
 
@@ -135,7 +136,7 @@ public class IndexIngestionBenchmark
               )
               .setReportParseExceptions(false)
               .setMaxRowCount(rowsPerSegment * 16)
-              .buildOffheapOak();
+              .buildOffheapOak(chunkMaxItems, chunkBytesPerItem);
     }
   }
 
@@ -154,6 +155,7 @@ public class IndexIngestionBenchmark
     long duration = System.currentTimeMillis() - time;
     double throughput = (10 * rowsPerSegment) / (double) duration;
     log.info("Throughput: " + throughput + " ops/ms");
+    incIndex.getRebalanceCount();
   }
 
 }

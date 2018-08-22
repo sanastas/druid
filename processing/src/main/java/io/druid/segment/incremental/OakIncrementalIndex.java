@@ -86,7 +86,9 @@ public class OakIncrementalIndex extends InternalDataIncrementalIndex<BufferAggr
           boolean deserializeComplexMetrics,
           boolean reportParseExceptions,
           boolean concurrentEventAdd,
-          int maxRowCount
+          int maxRowCount,
+          int chunkMaxItems,
+          int chunkBytesPerItem
   )
   {
     super(incrementalIndexSchema, reportParseExceptions, maxRowCount);
@@ -109,20 +111,17 @@ public class OakIncrementalIndex extends InternalDataIncrementalIndex<BufferAggr
             .setValueSerializer(new OakValueSerializer(dimensionDescsList, aggsManager, reportParseExceptions, in))
             .setMinKey(minIncrementalIndexRow)
             .setComparator(new OakKeysComparator(dimensionDescsList, this.isRollup()))
-            .setMemoryCapacity(memoryCapacity);
-
-    if (env != null) {
-      String chunkMaxItems = env.get("chunkMaxItems");
-      if (chunkMaxItems != null) {
-        builder = builder.setChunkMaxItems(Integer.getInteger(chunkMaxItems));
-      }
-      String chunkBytesPerItem = env.get("chunkBytesPerItem");
-      if (chunkMaxItems != null) {
-        builder = builder.setChunkBytesPerItem(Integer.getInteger(chunkBytesPerItem));
-      }
-    }
+            .setMemoryCapacity(memoryCapacity)
+            .setChunkMaxItems(chunkMaxItems)
+            .setChunkBytesPerItem(chunkBytesPerItem);
 
     oak = builder.build();
+  }
+
+  @Override
+  public void getRebalanceCount()
+  {
+    log.info("RebalanceCount: " + oak.rebalanceCount.get());
   }
 
   @Override

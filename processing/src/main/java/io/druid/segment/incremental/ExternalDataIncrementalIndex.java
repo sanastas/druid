@@ -80,6 +80,12 @@ public abstract class ExternalDataIncrementalIndex<AggregatorType> extends Incre
   ) throws IndexSizeExceededException;
 
   @Override
+  public void getRebalanceCount()
+  {
+    return;
+  }
+
+  @Override
   public IncrementalIndexAddResult add(InputRow row, boolean skipMaxRowsInMemoryCheck) throws IndexSizeExceededException
   {
     IncrementalIndexRowResult incrementalIndexRowResult = toIncrementalIndexRow(row);
