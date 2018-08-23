@@ -56,7 +56,7 @@ public class IndexIngestionBenchmark
   @Param({"true", "false"})
   private boolean rollup;
 
-  @Param({"10000", "75000"})
+  @Param({"75000"})
   private int rowsPerSegment;
 
   @Param({"basic"})
