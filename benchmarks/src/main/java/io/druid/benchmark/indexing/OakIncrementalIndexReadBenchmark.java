@@ -63,7 +63,7 @@ import java.util.concurrent.TimeUnit;
 @Measurement(iterations = 25)
 public class OakIncrementalIndexReadBenchmark
 {
-  @Param({"10000", "75000"})
+  @Param({"75000"})
   private int rowsPerSegment;
 
   @Param({"basic"})
