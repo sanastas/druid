@@ -77,7 +77,7 @@ public class OakIncrementalIndex extends InternalDataIncrementalIndex<BufferAggr
   OakMap<IncrementalIndexRow, Row> oak;
 
   private OffheapAggsManager aggsManager;
-  private AtomicInteger versionCounter; // Only used in Plain mode
+  private AtomicInteger rowIndexGenerator; // Only used in Plain mode
 
   Map<String, String> env = System.getenv();
 
@@ -95,7 +95,7 @@ public class OakIncrementalIndex extends InternalDataIncrementalIndex<BufferAggr
             reportParseExceptions, concurrentEventAdd, rowSupplier,
             columnCapabilities, null, this);
 
-    this.versionCounter = new AtomicInteger(0);
+    this.rowIndexGenerator = new AtomicInteger(IncrementalIndexRow.EMPTY_ROW_INDEX);
     IncrementalIndexRow minIncrementalIndexRow = getMinIncrementalIndexRow();
 
     long maxDirectMemory = VM.maxDirectMemory();
@@ -123,6 +123,12 @@ public class OakIncrementalIndex extends InternalDataIncrementalIndex<BufferAggr
     }
 
     oak = builder.build();
+  }
+
+  @Override
+  public int getLastRowIndex()
+  {
+    return this.rowIndexGenerator.get();
   }
 
   @Override
@@ -378,7 +384,7 @@ public class OakIncrementalIndex extends InternalDataIncrementalIndex<BufferAggr
     if (isRollup()) {
       incrementalIndexRow.setRowIndex(IncrementalIndexRow.EMPTY_ROW_INDEX);
     } else {
-      incrementalIndexRow.setRowIndex(versionCounter.getAndIncrement());
+      incrementalIndexRow.setRowIndex(rowIndexGenerator.getAndIncrement());
     }
 
     if (numEntries.get() < maxRowCount || skipMaxRowsInMemoryCheck) {
