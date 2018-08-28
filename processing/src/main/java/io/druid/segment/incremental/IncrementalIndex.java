@@ -819,13 +819,13 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
     @Override
     public int compare(IncrementalIndexRow lhs, IncrementalIndexRow rhs)
     {
-      int retVal = Longs.compare(lhs.timestamp, rhs.timestamp);
-      int numComparisons = Math.min(lhs.dims.length, rhs.dims.length);
+      int retVal = Longs.compare(lhs.getTimestamp(), rhs.getTimestamp());
+      int numComparisons = Math.min(lhs.getDimsLength(), rhs.getDimsLength());
 
       int index = 0;
       while (retVal == 0 && index < numComparisons) {
-        final Object lhsIdxs = lhs.dims[index];
-        final Object rhsIdxs = rhs.dims[index];
+        final Object lhsIdxs = lhs.getDim(index);
+        final Object rhsIdxs = rhs.getDim(index);
 
         if (lhsIdxs == null) {
           if (rhsIdxs == null) {
@@ -845,11 +845,11 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
       }
 
       if (retVal == 0) {
-        int lengthDiff = Ints.compare(lhs.dims.length, rhs.dims.length);
+        int lengthDiff = Ints.compare(lhs.getDimsLength(), rhs.getDimsLength());
         if (lengthDiff == 0) {
           return 0;
         }
-        Object[] largerDims = lengthDiff > 0 ? lhs.dims : rhs.dims;
+        IncrementalIndexRow largerDims = lengthDiff > 0 ? lhs : rhs;
         return allNull(largerDims, numComparisons) ? 0 : lengthDiff;
       }
 
@@ -857,10 +857,10 @@ public abstract class IncrementalIndex<AggregatorType> extends AbstractIndex imp
     }
   }
 
-  public static boolean allNull(Object[] dims, int startPosition)
+  public static boolean allNull(IncrementalIndexRow row, int startPosition)
   {
-    for (int i = startPosition; i < dims.length; i++) {
-      if (dims[i] != null) {
+    for (int i = startPosition; i < row.getDimsLength(); i++) {
+      if (row.getDim(i) != null) {
         return false;
       }
     }

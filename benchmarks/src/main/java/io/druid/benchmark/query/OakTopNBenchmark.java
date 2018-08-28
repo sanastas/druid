@@ -71,7 +71,18 @@ import io.druid.segment.incremental.IncrementalIndexSchema;
 import io.druid.segment.serde.ComplexMetrics;
 import io.druid.segment.writeout.OffHeapMemorySegmentWriteOutMediumFactory;
 import org.apache.commons.io.FileUtils;
-import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Fork;
+import org.openjdk.jmh.annotations.Warmup;
+import org.openjdk.jmh.annotations.Measurement;
+import org.openjdk.jmh.annotations.Param;
+import org.openjdk.jmh.annotations.TearDown;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
 import org.openjdk.jmh.infra.Blackhole;
 
 import java.io.File;
@@ -128,16 +139,16 @@ public class OakTopNBenchmark
   static {
     JSON_MAPPER = new DefaultObjectMapper();
     INDEX_IO = new IndexIO(
-            JSON_MAPPER,
-            OffHeapMemorySegmentWriteOutMediumFactory.instance(),
-            new ColumnConfig()
-            {
-              @Override
-              public int columnCacheSizeBytes()
-              {
-                return 0;
-              }
-            }
+        JSON_MAPPER,
+        OffHeapMemorySegmentWriteOutMediumFactory.instance(),
+        new ColumnConfig()
+        {
+          @Override
+          public int columnCacheSizeBytes()
+          {
+            return 0;
+          }
+        }
     );
     INDEX_MERGER_V9 = new IndexMergerV9(JSON_MAPPER, INDEX_IO, OffHeapMemorySegmentWriteOutMediumFactory.instance());
   }

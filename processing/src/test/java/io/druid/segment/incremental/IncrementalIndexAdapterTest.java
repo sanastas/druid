@@ -98,11 +98,11 @@ public class IncrementalIndexAdapterTest
 
     ArrayList<Integer> dim1Vals = new ArrayList<>();
     for (IncrementalIndexRow row : (Iterable<IncrementalIndexRow>) toPersist1.keySet()) {
-      dim1Vals.add(((int[]) row.getDims()[0])[0]);
+      dim1Vals.add(((int[]) row.getDim(0))[0]);
     }
     ArrayList<Integer> dim2Vals = new ArrayList<>();
     for (IncrementalIndexRow row : (Iterable<IncrementalIndexRow>) toPersist1.keySet()) {
-      dim2Vals.add(((int[]) row.getDims()[1])[0]);
+      dim2Vals.add(((int[]) row.getDim(1))[0]);
     }
 
     final IndexableAdapter incrementalAdapter = new IncrementalIndexAdapter(
