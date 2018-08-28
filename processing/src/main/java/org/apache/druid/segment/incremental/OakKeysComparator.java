@@ -42,14 +42,14 @@ public class OakKeysComparator implements OakComparator<IncrementalIndexRow>
   public int compareKeys(IncrementalIndexRow lhs, IncrementalIndexRow rhs)
   {
     int retVal = Longs.compare(lhs.getTimestamp(), rhs.getTimestamp());
-    int lhsDimsLength = lhs.getDims() == null ? 0 : lhs.getDims().length;
-    int rhsDimsLength = rhs.getDims() == null ? 0 : rhs.getDims().length;
+    int lhsDimsLength = lhs.getDimsLength();
+    int rhsDimsLength = rhs.getDimsLength();
     int numComparisons = Math.min(lhsDimsLength, rhsDimsLength);
 
     int index = 0;
     while (retVal == 0 && index < numComparisons) {
-      final Object lhsIdxs = lhs.getDims()[index];
-      final Object rhsIdxs = rhs.getDims()[index];
+      final Object lhsIdxs = lhs.getDim(index);
+      final Object rhsIdxs = rhs.getDim(index);
 
       if (lhsIdxs == null) {
         if (rhsIdxs == null) {
@@ -76,7 +76,7 @@ public class OakKeysComparator implements OakComparator<IncrementalIndexRow>
         }
         return lhs.getRowIndex() - rhs.getRowIndex();
       }
-      Object[] largerDims = lengthDiff > 0 ? lhs.getDims() : rhs.getDims();
+      IncrementalIndexRow largerDims = lengthDiff > 0 ? lhs : rhs;
       if (IncrementalIndex.allNull(largerDims, numComparisons)) {
         if (rollup) {
           return 0;
@@ -93,12 +93,14 @@ public class OakKeysComparator implements OakComparator<IncrementalIndexRow>
   public int compareSerializedKeys(ByteBuffer lhs, ByteBuffer rhs)
   {
     int retVal = Longs.compare(OakIncrementalIndex.getTimestamp(lhs), OakIncrementalIndex.getTimestamp(rhs));
-    int numComparisons = Math.min(OakIncrementalIndex.getDimsLength(lhs), OakIncrementalIndex.getDimsLength(rhs));
+    int lhsDimsLength = OakIncrementalIndex.getDimsLength(lhs);
+    int rhsDimsLength = OakIncrementalIndex.getDimsLength(rhs);
+    int numComparisons = Math.min(lhsDimsLength, rhsDimsLength);
 
     int dimIndex = 0;
     while (retVal == 0 && dimIndex < numComparisons) {
-      int lhsType = lhs.getInt(OakIncrementalIndex.getDimIndexInBuffer(lhs, dimIndex));
-      int rhsType = rhs.getInt(OakIncrementalIndex.getDimIndexInBuffer(rhs, dimIndex));
+      int lhsType = lhs.getInt(OakIncrementalIndex.getDimIndexInBuffer(lhs, lhsDimsLength, dimIndex));
+      int rhsType = rhs.getInt(OakIncrementalIndex.getDimIndexInBuffer(rhs, rhsDimsLength, dimIndex));
 
       if (lhsType == OakIncrementalIndex.NO_DIM) {
         if (rhsType == OakIncrementalIndex.NO_DIM) {
@@ -120,7 +122,7 @@ public class OakKeysComparator implements OakComparator<IncrementalIndexRow>
     }
 
     if (retVal == 0) {
-      int lengthDiff = Ints.compare(OakIncrementalIndex.getDimsLength(lhs), OakIncrementalIndex.getDimsLength(rhs));
+      int lengthDiff = Ints.compare(lhsDimsLength, rhsDimsLength);
       if (lengthDiff == 0) {
         if (rollup) {
           return 0;
@@ -144,13 +146,13 @@ public class OakKeysComparator implements OakComparator<IncrementalIndexRow>
   {
     int retVal = Longs.compare(OakIncrementalIndex.getTimestamp(lhs), rhs.getTimestamp());
     int lhsDimsLength = OakIncrementalIndex.getDimsLength(lhs);
-    int rhsDimsLength = rhs.getDims() == null ? 0 : rhs.getDims().length;
+    int rhsDimsLength = rhs.getDimsLength();
     int numComparisons = Math.min(lhsDimsLength, rhsDimsLength);
 
     int index = 0;
     while (retVal == 0 && index < numComparisons) {
       final Object lhsIdxs = OakIncrementalIndex.getDimValue(lhs, index);
-      final Object rhsIdxs = rhs.getDims()[index];
+      final Object rhsIdxs = rhs.getDim(index);
 
       if (lhsIdxs == null) {
         if (rhsIdxs == null) {
@@ -186,7 +188,7 @@ public class OakKeysComparator implements OakComparator<IncrementalIndexRow>
           return OakIncrementalIndex.getRowIndex(lhs) - rhs.getRowIndex();
         }
       } else {
-        if (OakIncrementalIndex.allNull(rhs.getDims(), numComparisons)) {
+        if (OakIncrementalIndex.allNull(rhs, numComparisons)) {
           if (rollup) {
             return 0;
           }

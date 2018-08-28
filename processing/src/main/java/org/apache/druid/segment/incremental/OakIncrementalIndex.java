@@ -31,6 +31,12 @@ import org.apache.druid.query.aggregation.AggregatorFactory;
 import org.apache.druid.query.aggregation.BufferAggregator;
 import org.apache.druid.query.aggregation.PostAggregator;
 import org.apache.druid.segment.ColumnValueSelector;
+import com.oath.oak.OakMap;
+import com.oath.oak.OakMapBuilder;
+import com.oath.oak.OakTransformView;
+import com.oath.oak.OakBufferView;
+import com.oath.oak.OakRBuffer;
+import com.oath.oak.CloseableIterator;
 
 import java.nio.ByteBuffer;
 import java.util.Iterator;
@@ -43,10 +49,6 @@ import org.apache.druid.segment.DimensionHandler;
 import org.apache.druid.segment.DimensionIndexer;
 import org.apache.druid.segment.column.ColumnCapabilitiesImpl;
 import org.apache.druid.segment.column.ValueType;
-import com.oath.oak.OakMapBuilder;
-import com.oath.oak.OakMap;
-import com.oath.oak.CloseableIterator;
-import com.oath.oak.OakTransformView;
 import sun.misc.VM;
 
 import javax.annotation.Nullable;
@@ -330,14 +332,16 @@ public class OakIncrementalIndex extends InternalDataIncrementalIndex<BufferAggr
     if (descending == true) {
       subMap = subMap.descendingMap();
     }
-    CloseableIterator<IncrementalIndexRow> keysIterator = subMap.keysIterator();
+
+    OakBufferView bufferView = subMap.createBufferView();
+    CloseableIterator<OakRBuffer> keysIterator = bufferView.keysIterator();
     return new Iterable<IncrementalIndexRow>() {
       @Override
       public Iterator<IncrementalIndexRow> iterator()
       {
         return Iterators.transform(
           keysIterator,
-          key -> key
+          oakRBuffer -> new OakIncrementalIndexRow(oakRBuffer, dimensionDescsList)
         );
       }
     };
@@ -502,9 +506,8 @@ public class OakIncrementalIndex extends InternalDataIncrementalIndex<BufferAggr
     return buff.getInt(buff.position() + DIMS_LENGTH_INDEX);
   }
 
-  static int getDimIndexInBuffer(ByteBuffer buff, int dimIndex)
+  static int getDimIndexInBuffer(ByteBuffer buff, int dimsLength, int dimIndex)
   {
-    int dimsLength = getDimsLength(buff);
     if (dimIndex >= dimsLength) {
       return NO_DIM;
     }
@@ -513,13 +516,18 @@ public class OakIncrementalIndex extends InternalDataIncrementalIndex<BufferAggr
 
   static Object getDimValue(ByteBuffer buff, int dimIndex)
   {
-    Object dimObject = null;
     int dimsLength = getDimsLength(buff);
+    return getDimValue(buff, dimIndex, dimsLength);
+  }
+
+  static Object getDimValue(ByteBuffer buff, int dimIndex, int dimsLength)
+  {
+    Object dimObject = null;
     if (dimIndex >= dimsLength) {
       return null;
     }
-    int dimIndexInBuffer = getDimIndexInBuffer(buff, dimIndex);
-    int dimType = buff.getInt(getDimIndexInBuffer(buff, dimIndex));
+    int dimIndexInBuffer = getDimIndexInBuffer(buff, dimsLength, dimIndex);
+    int dimType = buff.getInt(dimIndexInBuffer);
     if (dimType == OakIncrementalIndex.NO_DIM) {
       return null;
     } else if (dimType == ValueType.DOUBLE.ordinal()) {
@@ -547,7 +555,7 @@ public class OakIncrementalIndex extends InternalDataIncrementalIndex<BufferAggr
   {
     int dimsLength = getDimsLength(buff);
     for (int index = 0; index < Math.min(dimsLength, numComparisons); index++) {
-      if (buff.getInt(getDimIndexInBuffer(buff, index)) != OakIncrementalIndex.NO_DIM) {
+      if (buff.getInt(getDimIndexInBuffer(buff, dimsLength, index)) != OakIncrementalIndex.NO_DIM) {
         return false;
       }
     }

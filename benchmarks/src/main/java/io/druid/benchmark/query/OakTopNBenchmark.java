@@ -23,55 +23,66 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.io.Files;
-import io.druid.benchmark.datagen.BenchmarkDataGenerator;
-import io.druid.benchmark.datagen.BenchmarkSchemaInfo;
-import io.druid.benchmark.datagen.BenchmarkSchemas;
-import io.druid.collections.StupidPool;
-import io.druid.data.input.InputRow;
-import io.druid.hll.HyperLogLogHash;
-import io.druid.jackson.DefaultObjectMapper;
-import io.druid.java.util.common.concurrent.Execs;
-import io.druid.java.util.common.granularity.Granularities;
-import io.druid.java.util.common.guava.Sequence;
-import io.druid.java.util.common.logger.Logger;
-import io.druid.offheap.OffheapBufferGenerator;
-import io.druid.query.FinalizeResultsQueryRunner;
-import io.druid.query.Query;
-import io.druid.query.QueryPlus;
-import io.druid.query.QueryRunner;
-import io.druid.query.QueryRunnerFactory;
-import io.druid.query.QueryToolChest;
-import io.druid.query.Result;
-import io.druid.query.aggregation.AggregatorFactory;
-import io.druid.query.aggregation.DoubleMinAggregatorFactory;
-import io.druid.query.aggregation.DoubleSumAggregatorFactory;
-import io.druid.query.aggregation.LongMaxAggregatorFactory;
-import io.druid.query.aggregation.LongSumAggregatorFactory;
-import io.druid.query.aggregation.hyperloglog.HyperUniquesAggregatorFactory;
-import io.druid.query.aggregation.hyperloglog.HyperUniquesSerde;
-import io.druid.query.ordering.StringComparators;
-import io.druid.query.spec.MultipleIntervalSegmentSpec;
-import io.druid.query.spec.QuerySegmentSpec;
-import io.druid.query.topn.DimensionTopNMetricSpec;
-import io.druid.query.topn.TopNQuery;
-import io.druid.query.topn.TopNQueryBuilder;
-import io.druid.query.topn.TopNQueryConfig;
-import io.druid.query.topn.TopNQueryQueryToolChest;
-import io.druid.query.topn.TopNQueryRunnerFactory;
-import io.druid.query.topn.TopNResultValue;
-import io.druid.segment.IncrementalIndexSegment;
-import io.druid.segment.IndexIO;
-import io.druid.segment.IndexMergerV9;
-import io.druid.segment.IndexSpec;
-import io.druid.segment.QueryableIndex;
-import io.druid.segment.QueryableIndexSegment;
-import io.druid.segment.column.ColumnConfig;
-import io.druid.segment.incremental.IncrementalIndex;
-import io.druid.segment.incremental.IncrementalIndexSchema;
-import io.druid.segment.serde.ComplexMetrics;
-import io.druid.segment.writeout.OffHeapMemorySegmentWriteOutMediumFactory;
+import org.apache.druid.benchmark.datagen.BenchmarkDataGenerator;
+import org.apache.druid.benchmark.datagen.BenchmarkSchemaInfo;
+import org.apache.druid.benchmark.datagen.BenchmarkSchemas;
+import org.apache.druid.collections.StupidPool;
+import org.apache.druid.data.input.InputRow;
+import org.apache.druid.hll.HyperLogLogHash;
+import org.apache.druid.jackson.DefaultObjectMapper;
+import org.apache.druid.java.util.common.concurrent.Execs;
+import org.apache.druid.java.util.common.granularity.Granularities;
+import org.apache.druid.java.util.common.guava.Sequence;
+import org.apache.druid.java.util.common.logger.Logger;
+import org.apache.druid.offheap.OffheapBufferGenerator;
+import org.apache.druid.query.FinalizeResultsQueryRunner;
+import org.apache.druid.query.Query;
+import org.apache.druid.query.QueryPlus;
+import org.apache.druid.query.QueryRunner;
+import org.apache.druid.query.QueryRunnerFactory;
+import org.apache.druid.query.QueryToolChest;
+import org.apache.druid.query.Result;
+import org.apache.druid.query.aggregation.AggregatorFactory;
+import org.apache.druid.query.aggregation.DoubleMinAggregatorFactory;
+import org.apache.druid.query.aggregation.DoubleSumAggregatorFactory;
+import org.apache.druid.query.aggregation.LongMaxAggregatorFactory;
+import org.apache.druid.query.aggregation.LongSumAggregatorFactory;
+import org.apache.druid.query.aggregation.hyperloglog.HyperUniquesAggregatorFactory;
+import org.apache.druid.query.aggregation.hyperloglog.HyperUniquesSerde;
+import org.apache.druid.query.ordering.StringComparators;
+import org.apache.druid.query.spec.MultipleIntervalSegmentSpec;
+import org.apache.druid.query.spec.QuerySegmentSpec;
+import org.apache.druid.query.topn.DimensionTopNMetricSpec;
+import org.apache.druid.query.topn.TopNQuery;
+import org.apache.druid.query.topn.TopNQueryBuilder;
+import org.apache.druid.query.topn.TopNQueryConfig;
+import org.apache.druid.query.topn.TopNQueryQueryToolChest;
+import org.apache.druid.query.topn.TopNQueryRunnerFactory;
+import org.apache.druid.query.topn.TopNResultValue;
+import org.apache.druid.segment.IncrementalIndexSegment;
+import org.apache.druid.segment.IndexIO;
+import org.apache.druid.segment.IndexMergerV9;
+import org.apache.druid.segment.IndexSpec;
+import org.apache.druid.segment.QueryableIndex;
+import org.apache.druid.segment.QueryableIndexSegment;
+import org.apache.druid.segment.column.ColumnConfig;
+import org.apache.druid.segment.incremental.IncrementalIndex;
+import org.apache.druid.segment.incremental.IncrementalIndexSchema;
+import org.apache.druid.segment.serde.ComplexMetrics;
+import org.apache.druid.segment.writeout.OffHeapMemorySegmentWriteOutMediumFactory;
 import org.apache.commons.io.FileUtils;
-import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Fork;
+import org.openjdk.jmh.annotations.Warmup;
+import org.openjdk.jmh.annotations.Measurement;
+import org.openjdk.jmh.annotations.Param;
+import org.openjdk.jmh.annotations.TearDown;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
 import org.openjdk.jmh.infra.Blackhole;
 
 import java.io.File;
@@ -108,7 +119,7 @@ public class OakTopNBenchmark
   @Param({"10"})
   private int threshold;
 
-  private static final Logger log = new Logger(TopNBenchmark.class);
+  private static final Logger log = new Logger(OakTopNBenchmark.class);
   private static final int RNG_SEED = 9999;
   private static final IndexMergerV9 INDEX_MERGER_V9;
   private static final IndexIO INDEX_IO;
@@ -128,16 +139,16 @@ public class OakTopNBenchmark
   static {
     JSON_MAPPER = new DefaultObjectMapper();
     INDEX_IO = new IndexIO(
-            JSON_MAPPER,
-            OffHeapMemorySegmentWriteOutMediumFactory.instance(),
-            new ColumnConfig()
-            {
-              @Override
-              public int columnCacheSizeBytes()
-              {
-                return 0;
-              }
-            }
+        JSON_MAPPER,
+        OffHeapMemorySegmentWriteOutMediumFactory.instance(),
+        new ColumnConfig()
+        {
+          @Override
+          public int columnCacheSizeBytes()
+          {
+            return 0;
+          }
+        }
     );
     INDEX_MERGER_V9 = new IndexMergerV9(JSON_MAPPER, INDEX_IO, OffHeapMemorySegmentWriteOutMediumFactory.instance());
   }
