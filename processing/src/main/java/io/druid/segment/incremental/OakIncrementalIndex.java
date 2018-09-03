@@ -551,6 +551,7 @@ public class OakIncrementalIndex extends InternalDataIncrementalIndex<BufferAggr
     return dimObject;
   }
 
+
   static boolean checkDimsAllNull(ByteBuffer buff, int numComparisons)
   {
     int dimsLength = getDimsLength(buff);
