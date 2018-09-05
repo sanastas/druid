@@ -17,11 +17,12 @@
  * under the License.
  */
 
-package io.druid.segment.incremental;
+package org.apache.druid.segment.incremental;
 
 import com.oath.oak.OakRBuffer;
 import org.apache.druid.segment.column.ValueType;
 import org.apache.druid.segment.incremental.IncrementalIndex.DimensionDesc;
+
 import java.util.List;
 
 public class OakIncrementalIndexRow extends IncrementalIndexRow
