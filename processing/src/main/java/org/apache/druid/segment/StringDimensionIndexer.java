@@ -443,11 +443,11 @@ public class StringDimensionIndexer implements DimensionIndexer<Integer, int[], 
       @Override
       public IndexedInts getRow()
       {
-        final Object[] dims = currEntry.get().getDims();
+        IncrementalIndexRow key = currEntry.get();
 
         int[] indices;
-        if (dimIndex < dims.length) {
-          indices = (int[]) dims[dimIndex];
+        if (dimIndex < key.getDimsLength()) {
+          indices = (int[]) key.getDim(dimIndex);
         } else {
           indices = null;
         }
@@ -497,12 +497,12 @@ public class StringDimensionIndexer implements DimensionIndexer<Integer, int[], 
               @Override
               public boolean matches()
               {
-                Object[] dims = currEntry.get().getDims();
-                if (dimIndex >= dims.length) {
+                IncrementalIndexRow key = currEntry.get();
+                if (dimIndex >= key.getDimsLength()) {
                   return value == null;
                 }
 
-                int[] dimsInt = (int[]) dims[dimIndex];
+                int[] dimsInt = (int[]) key.getDim(dimIndex);
                 if (dimsInt == null || dimsInt.length == 0) {
                   return value == null;
                 }
@@ -543,12 +543,12 @@ public class StringDimensionIndexer implements DimensionIndexer<Integer, int[], 
           @Override
           public boolean matches()
           {
-            Object[] dims = currEntry.get().getDims();
-            if (dimIndex >= dims.length) {
+            IncrementalIndexRow key = currEntry.get();
+            if (dimIndex >= key.getDimsLength()) {
               return matchNull;
             }
 
-            int[] dimsInt = (int[]) dims[dimIndex];
+            int[] dimsInt = (int[]) key.getDim(dimIndex);
             if (dimsInt == null || dimsInt.length == 0) {
               return matchNull;
             }
@@ -628,13 +628,12 @@ public class StringDimensionIndexer implements DimensionIndexer<Integer, int[], 
           return null;
         }
 
-        Object[] dims = key.getDims();
-        if (dimIndex >= dims.length) {
+        if (dimIndex >= key.getDimsLength()) {
           return null;
         }
 
         return convertUnsortedEncodedKeyComponentToActualArrayOrList(
-            (int[]) dims[dimIndex],
+            (int[]) key.getDim(dimIndex),
             DimensionIndexer.ARRAY
         );
       }
